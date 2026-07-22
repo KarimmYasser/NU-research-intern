@@ -1,0 +1,6 @@
+# Scratch space — downloaded reference material, cloned repos, one-off script output.
+# See CLAUDE.md for the temp/ convention. Not meant to be version-controlled.
+temp/
+
+# Local Claude Code settings (machine-specific)
+.claude/settings.local.json
