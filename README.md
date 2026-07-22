@@ -15,7 +15,10 @@ See `CLAUDE.md` for full project context (objectives, phases, KPIs) intended to 
 - `docs/` — reference material and project documentation:
   - `ConceptNote-1.pdf` — the authoritative project scope, timeline, and KPIs from the supervisor
   - `openfoam-onboarding.md` + `openfoam/` — OpenFOAM case-structure and `blockMesh` onboarding, grounded in real files from the official OpenFOAM Foundation repo
+  - `vm-ollama-setup.md` — Phase I Ubuntu VM + OpenFOAM v13 + Ollama setup walkthrough
   - `local-llm-backend-comparison.md` — Ollama vs vLLM vs alternatives for the project's local-LLM requirement
+  - `first-meeting-prep.md` — status summary + open questions for the supervisor
+- `src/` — early Phase II agent scaffold (Meshing / Physics / Syntax-Validation agent stubs + orchestrator). Stubs only, not yet runnable — see `src/README.md`.
 - `temp/` — scratch space (downloaded reference repos, literature-review PDFs, exploratory output). Gitignored — not part of version control. See `CLAUDE.md` for the convention.
 
-No application source code yet — this repo currently holds onboarding/reference documentation produced ahead of Phase II (agentic framework implementation).
+The `src/` scaffold is structural only (stubbed agents) pending the local-LLM VM and confirmation of direction at the first supervisor meeting; the runnable pipeline is Phase II work.

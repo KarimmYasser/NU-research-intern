@@ -4,7 +4,7 @@ Step-by-step for the concept note's Phase I infrastructure tasks: provision the 
 
 ## 1. VM baseline
 
-- **OS:** Ubuntu 22.04, 24.04, or 25.04 LTS — OpenFOAM v13 is officially packaged for these (also 25.10/26.04). ([openfoam.org/download/13-ubuntu](https://openfoam.org/download/13-ubuntu/))
+- **OS:** Ubuntu 22.04 LTS, 24.04 LTS, or a recent interim release (25.04/25.10) — OpenFOAM v13 is officially packaged for these. For a long-lived research VM, prefer an LTS (22.04 or 24.04). ([openfoam.org/download/13-ubuntu](https://openfoam.org/download/13-ubuntu/))
 - **CPU-only is fine to start.** Per `docs/local-llm-backend-comparison.md`, the recommendation is to start with Ollama specifically because it doesn't require a GPU — a 7B GGUF model at Q4 quantization runs at roughly 10–30 tok/s on a modern CPU. Minimum practical spec: 4+ cores, 16GB RAM (8GB is tight once OpenFOAM meshing and a 7B model are both resident).
 - **If a GPU is available:** Ollama's install script auto-detects NVIDIA (CUDA) or AMD (ROCm) GPUs and configures itself accordingly — no separate GPU-specific install path needed for Ollama. A GPU changes the calculus on when to move to vLLM/SGLang (see the backend comparison doc) but isn't required for the Week 2 milestone.
 - **Isolation:** per the concept note this VM should be isolated (no external API calls) — confirm with Dr. Shaaban what "isolated" means concretely (no internet at all vs. no calls out to LLM provider APIs specifically), since that affects whether you can `apt update`/`curl` install scripts directly on it or need to stage packages another way.

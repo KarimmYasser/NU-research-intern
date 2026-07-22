@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-This is the working directory for a Nile University (NU) Summer Research Internship project, **SESC-2026-02**, under the Smart Engineering Systems Research Center (SESC). It currently contains only reference documents (`docs/`) — no source code has been added yet. When implementation starts, update this file with real build/run/test instructions instead of assuming any.
+This is the working directory for a Nile University (NU) Summer Research Internship project, **SESC-2026-02**, under the Smart Engineering Systems Research Center (SESC). It holds reference/onboarding documentation (`docs/`) plus an early Phase II agent scaffold (`src/`) — but no runnable pipeline yet: the scaffold is stubs, pending the local-LLM VM and the first supervisor meeting. Update the build/run/test guidance here once the pipeline actually executes.
 
 - **Intern:** Karim Yasser (Computer Engineering, Cairo University)
 - **Supervisor:** Dr. Mahmoud Mohamed Shaaban (SESC, Mashaaban@nu.edu.eg)
@@ -31,11 +31,16 @@ Key domain facts to keep in mind when working on this project:
 
 Corresponding KPIs: working Ubuntu VM + local LLM API (end of Week 2), pipeline produces a basic 3-folder OpenFOAM case from a text prompt (end of Week 4), generated case passes native OpenFOAM syntax checks e.g. `blockMesh` runs without fatal dictionary errors (end of Week 6), and a fully reproducible codebase with README + dependency list plus a technical report (end of Week 8).
 
-## Reference docs in `docs/`
+## Repo layout & key docs
 
-- `ConceptNote-1.pdf` — authoritative source for the project scope, timeline, and KPIs above; consult it directly for anything not summarized here.
-- `Internship Orientation Opening.pdf` — general NU internship onboarding/agenda material, not project-specific.
-- `Using AI in Scientific Research.pdf` — general guidance on AI use in research, not project-specific.
+- `docs/ConceptNote-1.pdf` — authoritative source for the project scope, timeline, and KPIs above; consult it directly for anything not summarized here.
+- `docs/openfoam-onboarding.md` — start here for OpenFOAM; indexes `docs/openfoam/{case-structure,blockmesh,command-reference}.md` (all grounded in the real v13 repo, not blog paraphrase).
+- `docs/vm-ollama-setup.md` — Phase I Ubuntu VM + OpenFOAM v13 + Ollama walkthrough (the Week 2 KPI).
+- `docs/local-llm-backend-comparison.md` — Ollama vs vLLM vs alternatives; recommends starting with Ollama.
+- `docs/first-meeting-prep.md` — status + open questions for the supervisor (agent framework, OpenFOAM version, VM/GPU, work split with Malak — all still open).
+- `src/` — early Phase II agent scaffold (Meshing / Physics / Syntax-Validation stubs + orchestrator). All stubs; see `src/README.md`.
+- `docs/Internship Orientation Opening.pdf`, `docs/Using AI in Scientific Research.pdf` — general NU material, not project-specific.
+- `temp/paper-research-agentic-cfd-llm/` — 40-paper literature review (gitignored); see its `findings.md`.
 
 ## `temp/` — scratch space
 

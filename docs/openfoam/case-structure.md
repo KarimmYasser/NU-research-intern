@@ -1,6 +1,6 @@
 # OpenFOAM Case Structure — Annotated, from a Real Case
 
-Every file below is reproduced verbatim from `temp/openfoam-repo/tutorials/incompressibleFluid/cavity/` — the official "lid-driven cavity" tutorial from the OpenFOAM Foundation's own v13 repo (cloned locally, see `docs/openfoam/README.md`). This is the canonical first case every OpenFOAM user learns on. Nothing here is paraphrased from a website; it's the actual dictionary files, annotated.
+Every file below is reproduced verbatim from `temp/openfoam-repo/tutorials/incompressibleFluid/cavity/` — the official "lid-driven cavity" tutorial from the OpenFOAM Foundation's own v13 repo (cloned locally, see `docs/openfoam-onboarding.md`). This is the canonical first case every OpenFOAM user learns on. Nothing here is paraphrased from a website; it's the actual dictionary files, annotated.
 
 The case models a square 2D box of fluid where the top wall drags the fluid along (`movingWall`), and the other three walls are stationary (`fixedWalls`).
 
@@ -9,9 +9,10 @@ cavity/
 ├── 0/
 │   ├── U            <- velocity field
 │   └── p            <- pressure field
-│       (also k, epsilon, omega, nut, nuTilda — turbulence fields, unused
-│        here since this case runs laminar, but present because the
-│        generic v13 solver expects them to exist)
+│       (also k, epsilon, omega, nut, nuTilda — turbulence fields; this v13
+│        cavity runs a k-epsilon RAS model at Re≈10,000, so these are actively
+│        solved with wall functions, not inert placeholders. The classic
+│        pre-v13 icoFoam cavity was laminar with none of these — a version trap.)
 ├── constant/
 │   ├── momentumTransport
 │   └── physicalProperties
@@ -114,7 +115,7 @@ RAS
 }
 ```
 
-Same v13 rename applies here — older versions call this `turbulenceProperties`. Note this cavity case sets up a turbulence model even though the case is small/laminar-Reynolds-number in practice; the generic v13 solver framework expects this file to exist regardless.
+Same v13 rename applies here — older versions call this `turbulenceProperties`. This v13 cavity genuinely runs turbulent: `simulationType RAS` with the k-epsilon model active (`turbulence on`), which is why `0/k`, `0/epsilon`, `0/nut` ship with real wall-function boundary conditions (e.g. `kqRWallFunction`) rather than being empty formalities. Version-confusion trap worth internalizing: the *classic* cavity tutorial most people know (pre-v13, run with `icoFoam`) is laminar and has none of these turbulence files — so few-shot examples pulled from older sources will be structurally different from what v13 produces.
 
 ## `system/controlDict` — run control
 
