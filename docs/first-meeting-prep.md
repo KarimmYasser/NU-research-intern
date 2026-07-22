@@ -13,8 +13,9 @@
 **Scope / title confusion**
 - The original track title was "3D Modelling from 2D Drawings"; the assessment email and concept note both describe CFD case generation instead. Worth a direct, quick confirmation that the concept note is the final scope and the geometry side is explicitly out of scope — rather than assuming.
 
-**OpenFOAM version**
-- The current OpenFOAM.org release (v13) renamed key files (`transportProperties`→`physicalProperties`, `turbulenceProperties`→`momentumTransport`) and changed how cases are run (`controlDict`'s `solver` field replaces picking a binary like `icoFoam`). Nearly all published LLM-agent papers target the *older* convention. Ask which version the group actually wants targeted — this changes what "correct" output looks like for the whole 8 weeks.
+**OpenFOAM version** — ✅ RESOLVED at meeting: target **v13**.
+- The current OpenFOAM.org release (v13) renamed key files (`transportProperties`→`physicalProperties`, `turbulenceProperties`→`momentumTransport`) and changed how cases are run (`controlDict`'s `solver` field replaces picking a binary like `icoFoam`). Nearly all published LLM-agent papers target the *older* convention.
+- **Outcome:** the project targets v13. Gotcha to carry forward: the supervisor's own onboarding decks (`docs/OpenFOAM® Introductory Training.pdf`, `docs/Introduction to the FVM method.pdf`) are **Wolf Dynamics / OpenFOAM 9** (old convention), as is the entire literature review — so both learning sources pull toward the old filenames while the pipeline must emit v13. See `docs/openfoam-onboarding.md` for the translation.
 
 **VM / hardware**
 - Does the isolated Ubuntu VM have a GPU? This directly decides Ollama-only-CPU vs vLLM/SGLang being viable, and which local models are even usable.
