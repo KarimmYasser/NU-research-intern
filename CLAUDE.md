@@ -37,10 +37,16 @@ Corresponding KPIs: working Ubuntu VM + local LLM API (end of Week 2), pipeline 
 - `docs/openfoam-onboarding.md` — start here for OpenFOAM; indexes `docs/openfoam/{case-structure,blockmesh,command-reference}.md` (all grounded in the real v13 repo, not blog paraphrase).
 - `docs/vm-ollama-setup.md` — Phase I Ubuntu VM + OpenFOAM v13 + Ollama walkthrough (the Week 2 KPI).
 - `docs/local-llm-backend-comparison.md` — Ollama vs vLLM vs alternatives; recommends starting with Ollama.
-- `docs/first-meeting-prep.md` — status + open questions for the supervisor (agent framework, OpenFOAM version, VM/GPU, work split with Malak — all still open).
+- `docs/first-meeting-prep.md` — status + open questions for the supervisor. OpenFOAM version RESOLVED → v13; still open: VM/GPU, work split with Malak, deliverable cadence.
+- `docs/phase-ii-architecture.md` — the Phase II engineering plan: LangGraph pipeline built on a **structured IR + deterministic renderer** ("reason free, constrain late" — the LLM emits a typed `CaseSpec`, code renders guaranteed-valid v13 files), the validation ladder + self-healing loop, and the meshing verdict. Grounded in the Foam-Agent teardown + the Constraint Tax finding; departs from raw-text generation because our model is local/weak.
+- `docs/agent-framework-comparison.md` — framework decision: recommends LangGraph (Pydantic AI runner-up); explains why off-the-shelf agents (Hermes, pi) don't fit.
+- `docs/rl-for-agent-skills.md` — exploratory research thread: applying RL / verifiable-reward self-improvement, using the validation ladder as the reward signal.
+- `docs/OpenFOAM® Introductory Training.pdf`, `docs/Introduction to the FVM method.pdf` — Wolf Dynamics training decks the supervisor assigned as onboarding (OpenFOAM 9 — old convention; mind the v13 gap). Tracked via Git LFS.
 - `src/` — early Phase II agent scaffold (Meshing / Physics / Syntax-Validation stubs + orchestrator). All stubs; see `src/README.md`.
 - `docs/Internship Orientation Opening.pdf`, `docs/Using AI in Scientific Research.pdf` — general NU material, not project-specific.
 - `temp/paper-research-agentic-cfd-llm/` — 40-paper literature review (gitignored); see its `findings.md`.
+- `temp/rl-agentic-research/` — RL-for-agents research scratch (gitignored); feeds `docs/rl-for-agent-skills.md`.
+- `temp/repr-arch-research/` — case-representation (IR vs raw-text) research scratch (gitignored); feeds `docs/phase-ii-architecture.md` §2.
 
 ## `temp/` — scratch space
 
