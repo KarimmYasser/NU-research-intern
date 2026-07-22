@@ -7,18 +7,17 @@ guaranteed-valid OpenFOAM v13 files. The model never writes dictionary syntax.
 
 Everything here is v13 convention (see docs/openfoam/case-structure.md):
 - `solver` is a v13 solver *module* named in controlDict (incompressibleFluid,
-  compressibleFluid, ...), NOT an old solver binary (icoFoam, simpleFoam).
+  ...), NOT an old solver binary (icoFoam, simpleFoam, pisoFoam).
 - properties live in constant/physicalProperties + constant/momentumTransport.
 
-Scope note: this first cut covers tier-1 geometry (an axis-aligned box) and the
-incompressibleFluid solver with a RAS turbulence model — enough to render the
-cavity tutorial. Wider coverage (cylinder/wedge, more solvers) extends the enums
-and the renderer; the overflow path handles what the renderer can't (see §2.3).
+Scope: geometry is either a tier-1 axis-aligned `box` (rendered to a blockMeshDict)
+or an `external_mesh` (mesh supplied separately — only the case setup is rendered,
+patches come from the mesh). Solver: incompressibleFluid with a RAS model.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Union
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
@@ -30,11 +29,7 @@ PatchType = Literal["wall", "patch", "empty", "symmetryPlane", "symmetry"]
 
 
 class BoxGeometry(BaseModel):
-    """An axis-aligned box meshed by blockMesh with a single graded hex block.
-
-    Coordinates are in `convert_to_meters` units (blockMesh's convertToMeters),
-    matching how the OpenFOAM tutorials express geometry.
-    """
+    """An axis-aligned box meshed by blockMesh with a single graded hex block."""
 
     kind: Literal["box"] = "box"
     convert_to_meters: float = 1.0
@@ -45,21 +40,33 @@ class BoxGeometry(BaseModel):
     grading: tuple[float, float, float] = (1.0, 1.0, 1.0)
 
 
+class ExternalMesh(BaseModel):
+    """Mesh supplied separately (STL+snappyHexMesh, converted, or provided polyMesh).
+
+    No blockMeshDict is rendered; patch names come from the mesh, so patches carry
+    only a name + boundary conditions (no box faces).
+    """
+
+    kind: Literal["external_mesh"] = "external_mesh"
+
+
+Geometry = Union[BoxGeometry, ExternalMesh]
+
+
 # --- boundary conditions --------------------------------------------------
 
-# A field BC is a (type, optional value) pair. `value` is a rendered token like
-# "uniform (1 0 0)" or "uniform 0"; the renderer places it verbatim.
 class FieldBC(BaseModel):
-    type: str  # fixedValue, noSlip, zeroGradient, empty, ...
+    """A field boundary condition: a type and an optional rendered value token."""
+
+    type: str  # fixedValue, noSlip, zeroGradient, empty, kqRWallFunction, ...
     value: str | None = None  # e.g. "uniform (1 0 0)"; None for type-only BCs
 
 
 class Patch(BaseModel):
     name: str
-    type: PatchType
-    faces: list[BoxFace]  # which box faces this patch covers
-    # per-field boundary conditions, keyed by field name ("U", "p", ...)
-    bc: dict[str, FieldBC]
+    type: PatchType = "patch"  # geometric type; only used when rendering a box mesh
+    faces: list[BoxFace] = []  # box faces this patch covers (box geometry only)
+    bc: dict[str, FieldBC]  # per-field boundary conditions, keyed by field name
 
 
 # --- physics --------------------------------------------------------------
@@ -67,41 +74,58 @@ class Patch(BaseModel):
 class Field(BaseModel):
     """A solved field written into 0/. `dimensions` is the 7-int OpenFOAM vector."""
 
-    name: str  # U, p, k, epsilon, ...
+    name: str  # U, p, k, epsilon, nut, nuTilda, ...
     field_class: Literal["volScalarField", "volVectorField"]
     dimensions: tuple[int, int, int, int, int, int, int]
-    internal_field: str  # "uniform (0 0 0)" or "uniform 0"
+    internal_field: str  # "uniform (0 0 0)" or "uniform 0.375"
 
 
 class TurbulenceRAS(BaseModel):
     simulation_type: Literal["RAS", "laminar", "LES"] = "RAS"
     model: str = "kEpsilon"  # kEpsilon, kOmegaSST, ...
     turbulence: bool = True
+    print_coeffs: bool = False
 
 
 class FluidProperties(BaseModel):
     viscosity_model: Literal["constant"] = "constant"
     nu: str = "1e-05 [m^2/s]"  # kinematic viscosity token as written in v13
+    comment: str | None = None  # rendered as a `// ...` note above nu
 
 
 class TimeControl(BaseModel):
+    start_from: str = "startTime"  # startTime, latestTime, ...
     start_time: float = 0.0
+    stop_at: str = "endTime"
     end_time: float = 10.0
     delta_t: float = 0.005
-    write_interval: int = 100
-    write_control: str = "timeStep"
+    write_control: str = "timeStep"  # timeStep, adjustableRunTime, ...
+    write_interval: float = 100
+    run_time_modifiable: str = "true"  # "true" / "yes"
+    adjust_time_step: str | None = None  # "yes" -> emits adjustTimeStep + maxCo
+    max_co: float | None = None
 
 
 # --- the whole case -------------------------------------------------------
+
+# Named numeric presets (fvSchemes + fvSolution templates) for the
+# incompressibleFluid solver. These reference field names, not geometry, so they
+# are stable across cases sharing a discretisation style.
+NumericsPreset = Literal[
+    "incompressibleFluid_limitedLinear",  # 2nd-order bounded (cavity)
+    "incompressibleFluid_upwind",  # 1st-order upwind, robust (channel)
+]
+
 
 class CaseSpec(BaseModel):
     """Complete structured description of one OpenFOAM v13 case."""
 
     solver: Literal["incompressibleFluid"] = "incompressibleFluid"
-    geometry: BoxGeometry
+    geometry: Geometry = PydanticField(discriminator="kind")
     patches: list[Patch]
     fields: list[Field]
     turbulence: TurbulenceRAS = PydanticField(default_factory=TurbulenceRAS)
     fluid: FluidProperties = PydanticField(default_factory=FluidProperties)
     time: TimeControl = PydanticField(default_factory=TimeControl)
-    schemes_family: Literal["firstOrder", "secondOrder"] = "firstOrder"
+    numerics: NumericsPreset = "incompressibleFluid_limitedLinear"
+    functions: list[str] = []  # raw controlDict function entries (e.g. "#includeFunc ...")
