@@ -13,7 +13,7 @@
 
 ## Running a case
 
-- v13 (current OpenFOAM.org release, per `system/controlDict`'s `solver` keyword): the case names its solver module in `controlDict` (e.g. `solver incompressibleFluid;`) and is executed via a generic runtime-selectable runner rather than a solver-specific binary.
+- v13 (current OpenFOAM.org release, per `system/controlDict`'s `solver` keyword): the case names its solver module in `controlDict` (e.g. `solver incompressibleFluid;`) and is run with the generic runtime-selectable runner, **`foamRun`** — e.g. `foamRun` (no arguments; it reads `solver` from `controlDict` itself), or `foamRun -help` to confirm the install works. Requires the v13 environment to be sourced first: `. /opt/openfoam13/etc/bashrc` (see `docs/vm-ollama-setup.md` for the full install/verification walkthrough).
 - Pre-v12 / most tutorials and papers still circulating (including the ones in this project's literature review): the case is run by directly invoking a solver binary named in `controlDict`'s `application` field — e.g. `icoFoam`, `simpleFoam`, `pimpleFoam`.
 
 Know which convention your generated case is targeting — mixing the two (e.g. an old-style `application icoFoam;` field expecting the new solver framework, or vice versa) will fail to run even if the file syntax itself is valid.

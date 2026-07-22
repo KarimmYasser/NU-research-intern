@@ -4,3 +4,12 @@ temp/
 
 # Local Claude Code settings (machine-specific)
 .claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/

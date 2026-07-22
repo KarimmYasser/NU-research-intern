@@ -1,0 +1,22 @@
+[project]
+name = "sesc-2026-02-agentic-cfd"
+version = "0.0.1"
+description = "Agentic AI workflow for OpenFOAM CFD case generation using local LLMs (SESC-2026-02)"
+requires-python = ">=3.11"
+dependencies = [
+    # OpenAI-compatible client works against Ollama's /v1 endpoint (and vLLM's, and
+    # SGLang's) without a rewrite if the backend choice changes later.
+    "openai>=1.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+# Agent-framework choice is an open question for the supervisor meeting
+# (see docs/first-meeting-prep.md). Nothing in agents/ imports any of these yet -
+# pick one and move its stub import out of a comment once decided.
+langchain = ["langchain>=0.2", "langgraph>=0.2"]
+autogen = ["pyautogen>=0.2"]
+crewai = ["crewai>=0.30"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
