@@ -329,6 +329,9 @@ def render_physicalproperties(spec: CaseSpec) -> str:
 
 def render_momentumtransport(spec: CaseSpec) -> str:
     t = spec.turbulence
+    if t.simulation_type == "laminar":
+        body = f"\n{_kv('simulationType', 'laminar')}\n"
+        return f"{_header('dictionary', 'momentumTransport', 'constant')}\n{body}\n{FOOTER}\n"
     inner = (
         f"{_kv('model', t.model, indent=4)}\n\n"
         f"{_kv('turbulence', 'on' if t.turbulence else 'off', indent=4)}\n\n"
