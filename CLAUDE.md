@@ -42,7 +42,7 @@ Corresponding KPIs: working Ubuntu VM + local LLM API (end of Week 2), pipeline 
 - `docs/agent-framework-comparison.md` — framework decision: recommends LangGraph (Pydantic AI runner-up); explains why off-the-shelf agents (Hermes, pi) don't fit.
 - `docs/rl-for-agent-skills.md` — exploratory research thread: applying RL / verifiable-reward self-improvement, using the validation ladder as the reward signal.
 - `docs/OpenFOAM® Introductory Training.pdf`, `docs/Introduction to the FVM method.pdf` — Wolf Dynamics training decks the supervisor assigned as onboarding (OpenFOAM 9 — old convention; mind the v13 gap). Tracked via Git LFS.
-- `src/` — early Phase II agent scaffold (Meshing / Physics / Syntax-Validation stubs + orchestrator). All stubs; see `src/README.md`.
+- `src/` — **experimental architecture spike (NOT the deliverable)**. Proves the Phase II design end-to-end: a plain-English prompt becomes an OpenFOAM v13 case that actually runs, via a local LLM + Docker OpenFOAM (no VM, no external API). Kept at spike maturity on purpose; the real implementation is (re)built deliberately later. See `src/README.md` for the status banner.
 - `docs/Internship Orientation Opening.pdf`, `docs/Using AI in Scientific Research.pdf` — general NU material, not project-specific.
 - `temp/paper-research-agentic-cfd-llm/` — 40-paper literature review (gitignored); see its `findings.md`.
 - `temp/rl-agentic-research/` — RL-for-agents research scratch (gitignored); feeds `docs/rl-for-agent-skills.md`.

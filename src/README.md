@@ -1,4 +1,13 @@
-# src/ — Phase II agent scaffold
+# src/ — Phase II architecture spike
+
+> **⚠️ Status: experimental spike, not the deliverable.** This code was written to
+> *validate the Phase II architecture end-to-end* — and it does: a plain-English
+> prompt becomes an OpenFOAM v13 case that actually runs (local LLM + Docker
+> OpenFOAM, no VM, no external API). It is deliberately kept at spike maturity
+> (one solver family, box/cavity scope, minimal error handling). **The real
+> implementation will be built deliberately later**, once the research phase is
+> complete and the design is settled with the supervisor. Treat everything here
+> as proven evidence for the architecture, not as final code to extend in place.
 
 Multi-agent OpenFOAM case-generation pipeline (concept note Phase II). Architecture: **structured IR + deterministic renderer** ("reason free, constrain late" - see `docs/phase-ii-architecture.md` §2): the LLM emits a compact validated intent, deterministic code renders guaranteed-valid v13 files, and the case is validated by *actually running it* in an OpenFOAM v13 Docker container. **The full path works end-to-end** - a plain-English prompt becomes a case that runs on real v13 (`foamRun` exits 0), driven by a local LM Studio model. Basic scope so far (incompressibleFluid, box/external mesh, laminar or k-epsilon), widening from here.
 
