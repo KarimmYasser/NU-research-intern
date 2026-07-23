@@ -110,22 +110,29 @@ def render_controldict(spec: CaseSpec) -> str:
     t = spec.time
     entries = [
         ("solver", spec.solver),
-        ("startFrom", "startTime"),
+        ("startFrom", t.start_from),
         ("startTime", _num(t.start_time)),
-        ("stopAt", "endTime"),
+        ("stopAt", t.stop_at),
         ("endTime", _num(t.end_time)),
         ("deltaT", _num(t.delta_t)),
         ("writeControl", t.write_control),
-        ("writeInterval", str(t.write_interval)),
+        ("writeInterval", _num(t.write_interval)),
         ("purgeWrite", "0"),
         ("writeFormat", "ascii"),
         ("writePrecision", "6"),
         ("writeCompression", "off"),
         ("timeFormat", "general"),
         ("timePrecision", "6"),
-        ("runTimeModifiable", "true"),
+        ("runTimeModifiable", t.run_time_modifiable),
     ]
+    if t.adjust_time_step is not None:
+        entries.append(("adjustTimeStep", t.adjust_time_step))
+    if t.max_co is not None:
+        entries.append(("maxCo", _num(t.max_co)))
     body = "\n\n".join(_kv(k, v) for k, v in entries)
+    if spec.functions:
+        funcs = "\n".join(f"    {fn}" for fn in spec.functions)
+        body += f"\n\nfunctions\n{{\n{funcs}\n}}"
     return f"{_header('dictionary', 'controlDict', 'system')}\n\n{body}\n\n{FOOTER}\n"
 
 
@@ -210,29 +217,127 @@ PIMPLE
 
 """
 
+# Upwind preset (1st-order, robust) — used by the turbulent channel case.
+_FVSCHEMES_UPWIND = """
+ddtSchemes
+{
+    default         Euler;
+}
+
+gradSchemes
+{
+    default         Gauss linear;
+}
+
+divSchemes
+{
+    default             none;
+
+    div(phi,U)          Gauss upwind;
+    div(phi,k)          Gauss upwind;
+    div(phi,epsilon)    Gauss upwind;
+    div(phi,R)          Gauss upwind;
+    div(R)              Gauss upwind;
+    div(phi,nuTilda)    Gauss upwind;
+
+    div((nuEff*dev2(T(grad(U))))) Gauss linear;
+}
+
+laplacianSchemes
+{
+    default         Gauss linear corrected;
+}
+
+interpolationSchemes
+{
+    default         linear;
+}
+
+snGradSchemes
+{
+    default         corrected;
+}
+
+"""
+
+_FVSOLUTION_UPWIND = """
+solvers
+{
+    p
+    {
+        solver          GAMG;
+        tolerance       0.01;
+        relTol          0.01;
+        smoother        DICGaussSeidel;
+    }
+
+    pFinal
+    {
+        $p;
+        relTol          0;
+    }
+
+    "(U|k|epsilon)"
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       0.01;
+        relTol          0.1;
+    }
+
+    "(U|k|epsilon)Final"
+    {
+        $U;
+        relTol          0;
+    }
+}
+
+PIMPLE
+{
+    nNonOrthogonalCorrectors 0;
+    nCorrectors     3;
+}
+
+"""
+
+_FVSCHEMES = {
+    "incompressibleFluid_limitedLinear": _FVSCHEMES_BODY,
+    "incompressibleFluid_upwind": _FVSCHEMES_UPWIND,
+}
+_FVSOLUTION = {
+    "incompressibleFluid_limitedLinear": _FVSOLUTION_BODY,
+    "incompressibleFluid_upwind": _FVSOLUTION_UPWIND,
+}
+
 
 def render_fvschemes(spec: CaseSpec) -> str:
-    return f"{_header('dictionary', 'fvSchemes', 'system')}\n{_FVSCHEMES_BODY}\n{FOOTER}\n"
+    body = _FVSCHEMES[spec.numerics]
+    return f"{_header('dictionary', 'fvSchemes', 'system')}\n{body}\n{FOOTER}\n"
 
 
 def render_fvsolution(spec: CaseSpec) -> str:
-    return f"{_header('dictionary', 'fvSolution', 'system')}\n{_FVSOLUTION_BODY}\n{FOOTER}\n"
+    body = _FVSOLUTION[spec.numerics]
+    return f"{_header('dictionary', 'fvSolution', 'system')}\n{body}\n{FOOTER}\n"
 
 
 def render_physicalproperties(spec: CaseSpec) -> str:
     f = spec.fluid
-    body = f"\n{_kv('viscosityModel', f.viscosity_model)}\n\n{_kv('nu', f.nu)}\n"
+    comment = f"// {f.comment}\n" if f.comment else ""
+    body = f"\n{_kv('viscosityModel', f.viscosity_model)}\n\n{comment}{_kv('nu', f.nu)}\n"
     return f"{_header('dictionary', 'physicalProperties', 'constant')}\n{body}\n{FOOTER}\n"
 
 
 def render_momentumtransport(spec: CaseSpec) -> str:
     t = spec.turbulence
-    body = (
-        f"\n{_kv('simulationType', t.simulation_type)}\n\n"
-        f"{t.simulation_type}\n{{\n"
+    inner = (
         f"{_kv('model', t.model, indent=4)}\n\n"
         f"{_kv('turbulence', 'on' if t.turbulence else 'off', indent=4)}\n\n"
-        f"}}\n"
+    )
+    if t.print_coeffs:
+        inner += f"{_kv('printCoeffs', 'on', indent=4)}\n\n"
+    body = (
+        f"\n{_kv('simulationType', t.simulation_type)}\n\n"
+        f"{t.simulation_type}\n{{\n{inner}}}\n"
     )
     return f"{_header('dictionary', 'momentumTransport', 'constant')}\n{body}\n{FOOTER}\n"
 
@@ -261,7 +366,9 @@ def render_field(field: Field, patches: list[Patch]) -> str:
 def render(spec: CaseSpec) -> CaseFiles:
     """Render a validated CaseSpec into an in-memory CaseFiles (v13)."""
     case = CaseFiles()
-    case.system["blockMeshDict"] = render_blockmeshdict(spec.geometry, spec.patches)
+    # Box geometry -> blockMeshDict; external mesh -> only the case setup is rendered.
+    if isinstance(spec.geometry, BoxGeometry):
+        case.system["blockMeshDict"] = render_blockmeshdict(spec.geometry, spec.patches)
     case.system["controlDict"] = render_controldict(spec)
     case.system["fvSchemes"] = render_fvschemes(spec)
     case.system["fvSolution"] = render_fvsolution(spec)
