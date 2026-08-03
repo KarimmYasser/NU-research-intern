@@ -182,6 +182,27 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
         turbulence=TurbulenceRAS(simulation_type="RAS" if turbulent else "laminar",
                                  model="kEpsilon", turbulence=turbulent),
         fluid=FluidProperties(nu=f"{intent.nu:g} [m^2/s]"),
-        time=TimeControl(start_time=0, end_time=0.1, delta_t=0.005, write_interval=20),
+        time=_time_control(intent),
         numerics="incompressibleFluid_limitedLinear",
     )
+
+
+def _time_control(intent: CaseIntent) -> TimeControl:
+    """Pick a starting deltaT + adaptive-timestep policy.
+
+    A fixed deltaT is only safe when we know the mesh's cell size relative to
+    the flow velocity (box geometry, where we chose the cell count). For an
+    externally-provided mesh we don't know the local cell size (e.g. tiny
+    cells at an inlet nozzle vs. a coarse bulk region), so a fixed deltaT can
+    produce a Courant number that is already too high on the very first step
+    and crash the solver (observed: SIGFPE inside GaussSeidelSmoother on the
+    RHVT mesh with a fixed deltaT=0.005 at 50 m/s inlets, Co max 1252).
+    `adjustTimeStep`/`maxCo` let OpenFOAM shrink deltaT itself before that
+    first solve, so start from a conservatively small deltaT and let it adapt.
+    """
+    if intent.geometry == "external_mesh":
+        return TimeControl(
+            start_time=0, end_time=0.1, delta_t=1e-6, write_interval=20,
+            adjust_time_step="yes", max_co=0.5,
+        )
+    return TimeControl(start_time=0, end_time=0.1, delta_t=0.005, write_interval=20)

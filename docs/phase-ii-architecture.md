@@ -33,25 +33,42 @@ Every published system (Foam-Agent, MetaOpenFOAM, OpenFOAMGPT, ChatCFD) has the 
 The decisive evidence is [*The Constraint Tax* (2605.26128 ✅)](https://arxiv.org/abs/2605.26128), which measures exactly our regime (small models, structured output, executable correctness). Its key results: forcing valid structure via *hard* constrained decoding raises schema-validity to 100% but **drops executable accuracy** (a tool-call test lost 43.5 points — objects parseable but semantically wrong); and the winning pattern is **"reason free, constrain late"** — let the model solve the problem in free text, *then* deterministically package the result. So the lesson is not "avoid structure," it's **place the LLM/deterministic boundary correctly**: the model reasons about physics (its strength); code emits syntax (its strength, perfectly, every time). This also eliminates the single largest failure mode of all five published systems without any model improvement — we stop "building error-correction for errors a better architecture wouldn't produce."
 
 ### 2.1 The pipeline
+This is the reference system diagram for the repo. It reflects the current scope: provided meshes only, boundary-file-first inspection, no mesh generation in this repo, local validation, and LangGraph as the orchestration target.
 
 ```mermaid
-flowchart TB
-    NL([NL physics prompt]) --> REASON[Reason freely\nfree-text physics analysis — no constraint]
-    RAG[(v13 FAISS indices)] -.->|top-k| REASON
-    REASON --> SPEC[Extract CaseSpec IR\nPydantic + enums — 'constrain late']
-    SPEC --> SV{validate IR\nschema + physics-sanity}
-    SV -->|fail → heal| REASON
-    SV -->|ok| REND[Deterministic renderer\nCaseSpec → guaranteed-valid v13 files]
-    REND -->|covered topology| RUN[Full dry run\nblockMesh · checkMesh · foamRun]
-    REND -.->|overflow: novel file only| GEN[Constrained free-text gen]
-    GEN --> RUN
-    RUN -->|ok| DONE([done])
-    RUN -->|fail| EP[Error parser\nclassify + locate]
-    EP --> REV{route by FailureClass}
-    REV -->|geometry/mesh intent| REASON
-    REV -->|physics/BC intent| REASON
-    REV -.->|max_iters or cycle| DONE
+    flowchart TB
+        NL([User problem statement]) --> READ[Read provided mesh boundary file]
+        READ --> PATCH[Extract patch names and patch types]
+        PATCH --> REASON[Reason freely\nphysics intent only]
+        RAG[(v13 RAG indices)] -.->|top-k| REASON
+        REASON --> SPEC[Extract CaseSpec IR\nPydantic + enums — constrain late]
+        SPEC --> SV{validate IR\nschema + physics-sanity}
+        SV -->|fail → heal| REASON
+        SV -->|ok| REND[Deterministic renderer\nCaseSpec → OpenFOAM case files]
+        REND --> RUN[Local OpenFOAM validation\nrun existing mesh / case setup]
+        RUN -->|ok| DONE([working case])
+        RUN -->|fail| EP[Error parser\nclassify + locate]
+        EP --> REV{route by FailureClass}
+        REV -->|mesh-boundary / geometry intent| REASON
+        REV -->|physics / BC intent| REASON
+        REV -.->|renderer or infra issue| STOP[stop and inspect]
+        STOP --> DONE
+
+        subgraph Mesh input
+            MESH[(Provided mesh folder)]
+            BOUNDARY[boundary file only]
+            MESH --> BOUNDARY
+        end
+
+        BOUNDARY -.-> READ
 ```
+
+Key points:
+
+- The diagram is intentionally mesh-first: the boundary file is the input summary for large meshes.
+- Mesh generation is not part of the repo scope.
+- The renderer only writes case setup around the provided mesh.
+- LangGraph is the intended orchestration layer, but the diagram is the stable design reference even while the scaffold is still plain Python.
 
 Our three concept-note agents keep their names but change *what they emit* — intent, not files:
 - **Meshing Agent** — decides geometry topology family (`box` / `cylinder` / `wedge` / `backstep` / `external_mesh`) + parameters; the renderer turns that into a correct `blockMeshDict`. It no longer writes vertex arithmetic by hand (§2.3).

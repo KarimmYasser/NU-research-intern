@@ -22,6 +22,7 @@ from pydantic import ValidationError as PydanticValidationError
 from .case import CaseFiles
 from .intent import CaseIntent, intent_to_spec
 from .llm_client import LLMConfig, make_client
+from .mesh_io import MeshPatch, copy_polymesh, load_external_mesh
 from .renderer import render
 from .validation_agent import ValidationAgent, ValidationResult
 
@@ -101,23 +102,58 @@ def _extract_json(text: str) -> str:
     return text.strip()
 
 
-def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 3) -> CaseIntent:
-    """NL -> validated CaseIntent, with a repair/validate/retry loop."""
+def _known_patches_hint(known_patches: list[MeshPatch]) -> str:
+    """Format the mesh's real patch names/types so the model must reuse them
+    verbatim (geometry="external_mesh") instead of inventing new patch names.
+    """
+    lines = "\n".join(f"- {p.name!r} (type {p.type}, {p.n_faces} faces)" for p in known_patches)
+    header = (
+        "\n\nThis case uses a mesh that is already provided "
+        '(geometry must be "external_mesh"). '
+        "It has exactly these patches - use these names verbatim, "
+        "do not invent, rename, merge, or drop any of them:\n"
+    )
+    return header + lines
+
+
+def _chat_create(client, config: LLMConfig, messages: list[dict]):
+    """Call chat.completions.create, tolerating backend quirks:
+    - some backends (e.g. reasoning models like gpt-5-mini on the Siemens SDC
+      LLM Gateway) reject temperature=0, only accepting the default (1);
+    - some backends don't support `response_format=json_schema` at all.
+    Tries the strictest combination first, degrading until one is accepted.
+    """
+    attempts = [
+        {"temperature": 0, "response_format": _RESPONSE_FORMAT},
+        {"response_format": _RESPONSE_FORMAT},
+        {"temperature": 0},
+        {},
+    ]
+    last_exc: Exception | None = None
+    for kwargs in attempts:
+        try:
+            return client.chat.completions.create(model=config.model, messages=messages, **kwargs)
+        except Exception as e:  # noqa: BLE001 - deliberately broad; trying next combo
+            last_exc = e
+    raise last_exc  # all combinations failed
+
+
+def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 3,
+                    known_patches: list[MeshPatch] | None = None) -> CaseIntent:
+    """NL -> validated CaseIntent, with a repair/validate/retry loop.
+
+    When `known_patches` is given (patches read from a provided mesh's boundary
+    file - see mesh_io.py), the prompt is grounded with the real patch names so
+    the model assigns physics roles/values to them rather than inventing a box.
+    """
     config = config or LLMConfig()
     client = make_client(config)
-    messages = [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": nl}]
+    user_content = nl + (_known_patches_hint(known_patches) if known_patches else "")
+    messages = [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": user_content}]
 
     last_err = ""
     for _ in range(max_retries):
-        try:
-            resp = client.chat.completions.create(
-                model=config.model, messages=messages, temperature=0,
-                response_format=_RESPONSE_FORMAT,  # grammar-constrained structured output
-            )
-        except Exception:  # backend may not support json_schema; fall back to plain
-            resp = client.chat.completions.create(
-                model=config.model, messages=messages, temperature=0,
-            )
+        resp = _chat_create(client, config, messages)
         raw = resp.choices[0].message.content or ""
         try:
             return CaseIntent(**json.loads(_extract_json(raw)))
@@ -140,11 +176,25 @@ class PipelineResult:
 
 
 def generate(nl: str, case_dir: Path, config: LLMConfig | None = None,
-             validate: bool = True) -> PipelineResult:
-    """Full pipeline: NL -> intent -> spec -> rendered files (-> optional run)."""
-    intent = extract_intent(nl, config)
+             validate: bool = True, mesh_dir: Path | None = None) -> PipelineResult:
+    """Full pipeline: NL -> intent -> spec -> rendered files (-> optional run).
+
+    `mesh_dir`, when given, points at an externally-provided mesh (a polyMesh
+    directory, or a folder containing `boundary` directly - see mesh_io.py).
+    No mesh is generated in this repo (R1, docs/phase-ii-architecture.md §2.1):
+    the mesh's boundary file is read for patch names/types, the LLM is grounded
+    on those exact names, and the raw polyMesh files are copied unparsed into
+    the case. Validation then skips blockMesh, since the mesh already exists.
+    """
+    known_patches = load_external_mesh(mesh_dir) if mesh_dir else None
+    intent = extract_intent(nl, config, known_patches=known_patches)
     spec = intent_to_spec(intent)
     case = render(spec)
     case.write(case_dir)
-    result = ValidationAgent().run_ladder(case_dir) if validate else ValidationResult(True, "skipped")
+    if mesh_dir:
+        copy_polymesh(mesh_dir, case_dir)
+    if not validate:
+        result = ValidationResult(True, "skipped")
+    else:
+        result = ValidationAgent().run_ladder(case_dir, skip_mesh_generation=bool(mesh_dir))
     return PipelineResult(intent, case, result)

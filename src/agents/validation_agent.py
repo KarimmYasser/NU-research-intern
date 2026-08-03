@@ -91,9 +91,19 @@ class ValidationAgent:
         errs = [] if ok else self.parse_errors(cp.stdout + cp.stderr, FailureClass.SOLVER_RUNTIME)
         return ValidationResult(ok, "foamRun", errs, cp.stdout + cp.stderr)
 
-    def run_ladder(self, case_dir: Path) -> ValidationResult:
-        """Run rungs in order; return the first failure, or the final success."""
-        for rung in (self.run_block_mesh, self.run_check_mesh, self.run_solver):
+    def run_ladder(self, case_dir: Path, skip_mesh_generation: bool = False) -> ValidationResult:
+        """Run rungs in order; return the first failure, or the final success.
+
+        `skip_mesh_generation=True` is for externally-provided meshes (R1, no
+        mesh generation in this repo): there is no blockMeshDict to run, the
+        mesh is already at constant/polyMesh/, so the ladder starts at
+        checkMesh instead of blockMesh.
+        """
+        rungs = (
+            (self.run_check_mesh, self.run_solver) if skip_mesh_generation
+            else (self.run_block_mesh, self.run_check_mesh, self.run_solver)
+        )
+        for rung in rungs:
             result = rung(case_dir)
             if not result.ok:
                 return result
@@ -125,6 +135,19 @@ class ValidationAgent:
             return []
         if "docker not found" in text or "timed out after" in text:
             return [ValidationError(FailureClass.ENVIRONMENT, None, text)]
+
+        # A runtime crash (SIGFPE/SIGSEGV/...) prints a signal stack trace
+        # instead of a "FOAM FATAL ERROR" block, so the regex below never
+        # matches and the fallback would otherwise surface the banner (the
+        # start of `text`) instead of the actual failure. Report the lines
+        # just before the crash (e.g. "Courant Number ... Time = ...", which
+        # is usually the actual clue - a divergence) plus the top stack frame.
+        sm = re.search(r"^#0\s+Foam::error::printStack", text, re.M)
+        if sm:
+            pre_crash = [ln for ln in text[:sm.start()].rstrip().splitlines() if ln.strip()][-6:]
+            top_frame = text[sm.start():].splitlines()[0]
+            message = "\n".join(pre_crash + [top_frame])
+            return [ValidationError(default_class, None, message)]
 
         m = re.search(r"-->\s*FOAM FATAL (IO )?ERROR\s*:?(.*?)(?:\n\s*\n|FOAM exiting|$)",
                       text, re.S)

@@ -1,0 +1,88 @@
+"""CLI entry point: run the LangGraph pipeline (graph.run) from the command line.
+
+Usage (from the repo root, so the cwd-relative Python install can find
+site-packages - see /memories/repo/python-env.md):
+
+    C:/Python314/python.exe -m agents run \\
+        --mesh "temp/provided-mesh/3D RHVT (OpenFOAM Files)" \\
+        --case-dir temp/out/rhvt \\
+        --prompt "Describe the flow here..."
+
+    # or read the prompt from a file:
+    C:/Python314/python.exe -m agents run --mesh ... --case-dir ... --prompt-file prompt.txt
+
+Requires PYTHONPATH to include src/ (this file lives at src/agents/__main__.py,
+so `python -m agents ...` run from src/ works; from the repo root, add src/
+to the path first - see the sys.path shim below, matching tests/*.py).
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+_SRC = Path(__file__).resolve().parents[1]
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from agents import graph  # noqa: E402
+from agents.llm_client import LLMConfig  # noqa: E402
+
+
+def _read_prompt(args: argparse.Namespace) -> str:
+    if args.prompt_file:
+        return Path(args.prompt_file).read_text().strip()
+    if args.prompt:
+        return args.prompt
+    print("Enter the problem description, then Ctrl-Z/Ctrl-D + Enter:", file=sys.stderr)
+    return sys.stdin.read().strip()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m agents",
+        description="Run the LangGraph OpenFOAM case-generation pipeline "
+                    "against an externally-provided mesh (no mesh generation - R1).",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    run_p = sub.add_parser("run", help="Run the pipeline end-to-end.")
+    run_p.add_argument("--mesh", required=True,
+                        help="Path to the provided mesh (a polyMesh dir, or a "
+                             "folder containing `boundary` directly).")
+    run_p.add_argument("--case-dir", required=True,
+                        help="Where to write the rendered OpenFOAM case.")
+    run_p.add_argument("--prompt", help="The natural-language problem statement.")
+    run_p.add_argument("--prompt-file", help="Read the prompt from this file instead.")
+    run_p.add_argument("--max-attempts", type=int, default=graph.DEFAULT_MAX_ATTEMPTS)
+    run_p.add_argument("--model", help="Override LOCAL_LLM_MODEL for this run.")
+
+    args = parser.parse_args(argv)
+
+    if args.command == "run":
+        nl = _read_prompt(args)
+        if not nl:
+            parser.error("no prompt given (use --prompt, --prompt-file, or stdin)")
+        config = LLMConfig(model=args.model) if args.model else LLMConfig()
+        final_state = graph.run(
+            nl=nl,
+            mesh_dir=Path(args.mesh),
+            case_dir=Path(args.case_dir),
+            config=config,
+            max_attempts=args.max_attempts,
+        )
+        result = final_state["validation"]
+        print(f"\n{'=' * 60}\nvalidation stage: {result.stage}\nok: {result.ok}")
+        if not result.ok:
+            for err in result.errors:
+                print(f"  [{err.failure_class.name}] {err.file_hint or ''}: {err.message}")
+        print(f"attempts used: {final_state['attempt']}/{args.max_attempts}")
+        print(f"case written to: {args.case_dir}")
+        return 0 if result.ok else 1
+
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

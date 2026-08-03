@@ -8,15 +8,18 @@ dependencies = [
     # SGLang's) without a rewrite if the backend choice changes later.
     "openai>=1.0",
     "pydantic>=2.0",
+    # Orchestration framework (decided: LangGraph - see docs/mentor-decisions,
+    # docs/agent-framework-comparison.md §7). agents/graph.py is the StateGraph.
+    "langgraph>=0.2",
+    # Loads .env (LOCAL_LLM_BASE_URL / LOCAL_LLM_MODEL / LLM_GATEWAY_API_KEY).
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
-# Agent-framework choice is an open question for the supervisor meeting
-# (see docs/first-meeting-prep.md). Nothing in agents/ imports any of these yet -
-# pick one and move its stub import out of a comment once decided.
-langchain = ["langchain>=0.2", "langgraph>=0.2"]
+# Alternatives considered and not chosen (docs/agent-framework-comparison.md).
 autogen = ["pyautogen>=0.2"]
 crewai = ["crewai>=0.30"]
+dev = ["pytest>=7.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

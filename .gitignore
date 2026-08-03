@@ -5,6 +5,9 @@ temp/
 # Local Claude Code settings (machine-specific)
 .claude/settings.local.json
 
+# Secrets (API keys, endpoints) - never commit
+.env
+
 # Python
 __pycache__/
 *.py[cod]
@@ -13,3 +16,5 @@ venv/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+Lib/*
+Scripts/*
