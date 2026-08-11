@@ -25,23 +25,29 @@ from .spec import (
     FieldBC,
     FluidProperties,
     Patch,
+    ThermoProperties,
     TimeControl,
     TurbulenceRAS,
 )
 
-PatchRole = Literal["inlet", "outlet", "wall", "movingWall", "empty"]
+PatchRole = Literal["inlet", "outlet", "wall", "movingWall", "empty", "cyclic"]
 
 
 class PatchIntent(BaseModel):
     name: str
     role: PatchRole
     velocity: tuple[float, float, float] | None = None  # inlet / movingWall
-    pressure: float | None = None  # outlet (gauge)
+    pressure: float | None = None  # outlet (gauge or absolute Pa depending on flow_type)
+    temperature: float | None = None  # inlet / wall temperature [K]
 
 
 class CaseIntent(BaseModel):
-    regime: Literal["laminar", "turbulent"]
-    nu: float  # kinematic viscosity [m^2/s]
+    regime: Literal["laminar", "turbulent"] = "turbulent"
+    flow_type: Literal["incompressible", "compressible"] = "incompressible"
+    solver_mode: Literal["transient", "steadyState"] = "transient"
+    nu: float = 1e-05  # kinematic viscosity [m^2/s] (incompressible)
+    p_ambient: float = 100000.0  # reference/operating pressure [Pa] (compressible)
+    temperature: float = 300.0  # internal/inlet reference temperature [K]
     geometry: Literal["box", "external_mesh"] = "box"
     box_size: tuple[float, float, float] | None = None  # required if geometry == box
     cells: tuple[int, int, int] = (20, 20, 1)
@@ -75,12 +81,7 @@ def _assign_faces(patches: list[PatchIntent]) -> dict[str, list[str]]:
 
 
 def _turbulence_values(intent: CaseIntent) -> tuple[float, float]:
-    """Estimate inlet k and epsilon from velocity and a length scale.
-
-    k = 1.5*(I*U)^2 with intensity I=5%%; epsilon = Cmu^0.75 * k^1.5 / L with
-    L = 0.05 * reference length. These reproduce the OpenFOAM cavity tutorial's
-    k=0.00375, epsilon=0.00754 for U=1, L_ref=0.1.
-    """
+    """Estimate inlet k and epsilon from velocity and a length scale."""
     umag = max(
         (math.sqrt(sum(c * c for c in p.velocity)) for p in intent.patches if p.velocity),
         default=1.0,
@@ -97,24 +98,39 @@ def _num(v: float) -> str:
 
 
 # per-role boundary conditions, given the turbulent field values k0, eps0
-def _bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, k0: float, eps0: float):
+def _bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compressible: bool,
+                 k0: float, eps0: float, default_temp: float, p_ambient: float):
     def vec(v):
         return f"uniform ({_num(v[0])} {_num(v[1])} {_num(v[2])})"
 
-    if role == "empty":
-        fields = ["U", "p"] + (["k", "epsilon", "nut"] if turbulent else [])
-        return {f: FieldBC(type="empty") for f in fields}
+    active_fields = ["U", "p"] + (["T", "alphat"] if compressible else []) + (["k", "epsilon", "nut"] if turbulent else [])
+    if role in ("empty", "cyclic"):
+        return {f: FieldBC(type=role) for f in active_fields}
 
     bc: dict[str, FieldBC] = {}
     if role in ("inlet", "movingWall"):
         bc["U"] = FieldBC(type="fixedValue", value=vec(p.velocity or (0, 0, 0)))
         bc["p"] = FieldBC(type="zeroGradient")
+        if compressible:
+            t_val = p.temperature if p.temperature is not None else default_temp
+            bc["T"] = FieldBC(type="fixedValue", value=f"uniform {_num(t_val)}")
+            bc["alphat"] = FieldBC(type="calculated", value="uniform 0")
     elif role == "outlet":
         bc["U"] = FieldBC(type="zeroGradient")
-        bc["p"] = FieldBC(type="fixedValue", value=f"uniform {_num(p.pressure or 0.0)}")
+        p_val = p.pressure if p.pressure is not None else (p_ambient if compressible else 0.0)
+        bc["p"] = FieldBC(type="fixedValue", value=f"uniform {_num(p_val)}")
+        if compressible:
+            bc["T"] = FieldBC(type="zeroGradient")
+            bc["alphat"] = FieldBC(type="calculated", value="uniform 0")
     else:  # wall
         bc["U"] = FieldBC(type="noSlip")
         bc["p"] = FieldBC(type="zeroGradient")
+        if compressible:
+            if p.temperature is not None:
+                bc["T"] = FieldBC(type="fixedValue", value=f"uniform {_num(p.temperature)}")
+            else:
+                bc["T"] = FieldBC(type="zeroGradient")
+            bc["alphat"] = FieldBC(type="alphatJayatillekeWallFunction", value="uniform 0")
 
     if turbulent:
         wall_like = role in ("wall", "movingWall")
@@ -136,25 +152,37 @@ def _bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, k0: float, ep
 def intent_to_spec(intent: CaseIntent) -> CaseSpec:
     """Deterministically expand a compact CaseIntent into a full v13 CaseSpec."""
     turbulent = intent.regime == "turbulent"
+    compressible = intent.flow_type == "compressible"
+    steady = intent.solver_mode == "steadyState"
     k0, eps0 = _turbulence_values(intent) if turbulent else (0.0, 0.0)
 
     faces = _assign_faces(intent.patches) if intent.geometry == "box" else {}
     patches = [
         Patch(
             name=p.name,
-            type="empty" if p.role == "empty" else ("wall" if p.role in ("wall", "movingWall") else "patch"),
+            type="empty" if p.role == "empty" else ("cyclic" if p.role == "cyclic" else ("wall" if p.role in ("wall", "movingWall") else "patch")),
             faces=faces.get(p.name, []),
-            bc=_bc_for_role(p.role, p, turbulent, k0, eps0),
+            bc=_bc_for_role(p.role, p, turbulent, compressible, k0, eps0, intent.temperature, intent.p_ambient),
         )
         for p in intent.patches
     ]
+
+    p_dim = (1, -1, -2, 0, 0, 0, 0) if compressible else (0, 2, -2, 0, 0, 0, 0)
+    p_int = f"uniform {_num(intent.p_ambient)}" if compressible else "uniform 0"
 
     fields = [
         Field(name="U", field_class="volVectorField",
               dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field="uniform (0 0 0)"),
         Field(name="p", field_class="volScalarField",
-              dimensions=(0, 2, -2, 0, 0, 0, 0), internal_field="uniform 0"),
+              dimensions=p_dim, internal_field=p_int),
     ]
+
+    if compressible:
+        fields.append(
+            Field(name="T", field_class="volScalarField",
+                  dimensions=(0, 0, 0, 1, 0, 0, 0), internal_field=f"uniform {_num(intent.temperature)}")
+        )
+
     if turbulent:
         fields += [
             Field(name="k", field_class="volScalarField",
@@ -164,6 +192,11 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
             Field(name="nut", field_class="volScalarField",
                   dimensions=(0, 2, -1, 0, 0, 0, 0), internal_field="uniform 0"),
         ]
+        if compressible:
+            fields.append(
+                Field(name="alphat", field_class="volScalarField",
+                      dimensions=(1, -1, -1, 0, 0, 0, 0), internal_field="uniform 0")
+            )
 
     if intent.geometry == "box":
         if intent.box_size is None:
@@ -174,32 +207,39 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
     else:
         geometry = ExternalMesh()
 
+    solver = "fluid" if compressible else "incompressibleFluid"
+    if compressible:
+        fluid = FluidProperties(flow_type="compressible", thermo=ThermoProperties())
+    else:
+        fluid = FluidProperties(flow_type="incompressible", nu=f"{intent.nu:g} [m^2/s]")
+
+    if steady and compressible:
+        numerics = "compressibleFluid_steadyState"
+    elif steady:
+        numerics = "incompressibleFluid_upwind"
+    else:
+        numerics = "incompressibleFluid_limitedLinear"
+
     return CaseSpec(
-        solver="incompressibleFluid",
+        solver=solver,
         geometry=geometry,
         patches=patches,
         fields=fields,
         turbulence=TurbulenceRAS(simulation_type="RAS" if turbulent else "laminar",
                                  model="kEpsilon", turbulence=turbulent),
-        fluid=FluidProperties(nu=f"{intent.nu:g} [m^2/s]"),
+        fluid=fluid,
         time=_time_control(intent),
-        numerics="incompressibleFluid_limitedLinear",
+        numerics=numerics,
     )
 
 
 def _time_control(intent: CaseIntent) -> TimeControl:
-    """Pick a starting deltaT + adaptive-timestep policy.
-
-    A fixed deltaT is only safe when we know the mesh's cell size relative to
-    the flow velocity (box geometry, where we chose the cell count). For an
-    externally-provided mesh we don't know the local cell size (e.g. tiny
-    cells at an inlet nozzle vs. a coarse bulk region), so a fixed deltaT can
-    produce a Courant number that is already too high on the very first step
-    and crash the solver (observed: SIGFPE inside GaussSeidelSmoother on the
-    RHVT mesh with a fixed deltaT=0.005 at 50 m/s inlets, Co max 1252).
-    `adjustTimeStep`/`maxCo` let OpenFOAM shrink deltaT itself before that
-    first solve, so start from a conservatively small deltaT and let it adapt.
-    """
+    """Pick a starting deltaT + adaptive-timestep policy."""
+    if intent.solver_mode == "steadyState":
+        return TimeControl(
+            start_time=0, end_time=1000, delta_t=1.0, write_interval=10,
+            adjust_time_step="no",
+        )
     if intent.geometry == "external_mesh":
         return TimeControl(
             start_time=0, end_time=0.1, delta_t=1e-6, write_interval=20,

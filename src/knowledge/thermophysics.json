@@ -1,0 +1,23 @@
+{
+  "thermophysics": [
+    {
+      "model_name": "air_ideal_gas",
+      "description": "Standard ideal gas thermophysical properties for air in OpenFOAM v13.",
+      "thermoType": {
+        "type": "heRhoThermo",
+        "mixture": "pureMixture",
+        "transport": "const",
+        "thermo": "hConst",
+        "equationOfState": "perfectGas",
+        "specie": "specie",
+        "energy": "sensibleEnthalpy"
+      },
+      "pRef": 0,
+      "mixture": {
+        "specie": {"molWeight": 28.966},
+        "thermodynamics": {"Cp": 1008, "hf": 0},
+        "transport": {"mu": 1.846e-05, "Pr": 0.71}
+      }
+    }
+  ]
+}

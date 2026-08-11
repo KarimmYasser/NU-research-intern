@@ -25,7 +25,7 @@ from pydantic import Field as PydanticField
 # --- geometry -------------------------------------------------------------
 
 BoxFace = Literal["xMin", "xMax", "yMin", "yMax", "zMin", "zMax"]
-PatchType = Literal["wall", "patch", "empty", "symmetryPlane", "symmetry"]
+PatchType = Literal["wall", "patch", "empty", "symmetryPlane", "symmetry", "cyclic"]
 
 
 class BoxGeometry(BaseModel):
@@ -58,7 +58,7 @@ Geometry = Union[BoxGeometry, ExternalMesh]
 class FieldBC(BaseModel):
     """A field boundary condition: a type and an optional rendered value token."""
 
-    type: str  # fixedValue, noSlip, zeroGradient, empty, kqRWallFunction, ...
+    type: str  # fixedValue, noSlip, zeroGradient, empty, cyclic, kqRWallFunction, ...
     value: str | None = None  # e.g. "uniform (1 0 0)"; None for type-only BCs
 
 
@@ -74,7 +74,7 @@ class Patch(BaseModel):
 class Field(BaseModel):
     """A solved field written into 0/. `dimensions` is the 7-int OpenFOAM vector."""
 
-    name: str  # U, p, k, epsilon, nut, nuTilda, ...
+    name: str  # U, p, T, k, epsilon, nut, alphat, nuTilda, ...
     field_class: Literal["volScalarField", "volVectorField"]
     dimensions: tuple[int, int, int, int, int, int, int]
     internal_field: str  # "uniform (0 0 0)" or "uniform 0.375"
@@ -87,10 +87,32 @@ class TurbulenceRAS(BaseModel):
     print_coeffs: bool = False
 
 
+class ThermoProperties(BaseModel):
+    thermo_type: dict[str, str] = PydanticField(
+        default_factory=lambda: {
+            "type": "heRhoThermo",
+            "mixture": "pureMixture",
+            "transport": "const",
+            "thermo": "hConst",
+            "equationOfState": "perfectGas",
+            "specie": "specie",
+            "energy": "sensibleEnthalpy",
+        }
+    )
+    p_ref: float = 0.0
+    mol_weight: float = 28.966
+    cp: float = 1008.0
+    hf: float = 0.0
+    mu: float = 1.846e-05
+    pr: float = 0.71
+
+
 class FluidProperties(BaseModel):
+    flow_type: Literal["incompressible", "compressible"] = "incompressible"
     viscosity_model: Literal["constant"] = "constant"
-    nu: str = "1e-05 [m^2/s]"  # kinematic viscosity token as written in v13
+    nu: str = "1e-05 [m^2/s]"  # kinematic viscosity token as written in v13 for incompressible
     comment: str | None = None  # rendered as a `// ...` note above nu
+    thermo: ThermoProperties | None = None  # for compressible flow
 
 
 class TimeControl(BaseModel):
@@ -108,19 +130,19 @@ class TimeControl(BaseModel):
 
 # --- the whole case -------------------------------------------------------
 
-# Named numeric presets (fvSchemes + fvSolution templates) for the
-# incompressibleFluid solver. These reference field names, not geometry, so they
-# are stable across cases sharing a discretisation style.
+# Named numeric presets (fvSchemes + fvSolution templates). These reference field
+# names, not geometry, so they are stable across cases sharing a discretisation style.
 NumericsPreset = Literal[
     "incompressibleFluid_limitedLinear",  # 2nd-order bounded (cavity)
     "incompressibleFluid_upwind",  # 1st-order upwind, robust (channel)
+    "compressibleFluid_steadyState",  # steady-state SIMPLE (vortex tube)
 ]
 
 
 class CaseSpec(BaseModel):
     """Complete structured description of one OpenFOAM v13 case."""
 
-    solver: Literal["incompressibleFluid"] = "incompressibleFluid"
+    solver: str = "incompressibleFluid"  # incompressibleFluid, fluid, ...
     geometry: Geometry = PydanticField(discriminator="kind")
     patches: list[Patch]
     fields: list[Field]

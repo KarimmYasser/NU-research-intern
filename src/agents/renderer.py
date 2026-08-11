@@ -300,13 +300,136 @@ PIMPLE
 
 """
 
+# Compressible steady-state preset (vortex tube)
+_FVSCHEMES_COMPRESSIBLE_STEADY = """
+ddtSchemes
+{
+    default         steadyState;
+}
+
+gradSchemes
+{
+    default         Gauss linear;
+    grad(k)         cellMDLimited Gauss linear 1;
+    grad(U)         cellMDLimited Gauss linear 1;
+    grad(h)         cellMDLimited Gauss linear 1;
+    grad(e)         cellMDLimited Gauss linear 1;
+}
+
+divSchemes
+{
+    default         none;
+
+    div(phi,U)      Gauss limitedLinear 1;
+    div(phi,h)      Gauss limitedLinear 1;
+    div(phi,e)      Gauss limitedLinear 1;
+
+    div(phi,k)       Gauss limitedLinear01 1;
+    div(phi,epsilon) Gauss limitedLinear01 1;
+    div(phi,omega)   Gauss limitedLinear01 1;
+
+    div(phi,K)      Gauss linear;
+    div(phi,Ekp)    Gauss linear;
+    div(R)          Gauss linear;
+    div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear;
+}
+
+laplacianSchemes
+{
+    default         Gauss linear corrected;
+}
+
+interpolationSchemes
+{
+    default         linear;
+}
+
+snGradSchemes
+{
+    default         corrected;
+}
+
+"""
+
+_FVSOLUTION_COMPRESSIBLE_STEADY = """
+solvers
+{
+    "rho.*"
+    {
+        solver          PCG;
+        preconditioner  DIC;
+        tolerance       0;
+        relTol          0;
+    }
+
+    p
+    {
+        solver          GAMG;
+        smoother        GaussSeidel;
+        tolerance       1e-06;
+        relTol          0.01;
+        cacheAgglomeration true;
+        nCellsInCoarsestLevel 1000;
+        agglomerator    faceAreaPair;
+        mergeLevels     1;
+    }
+
+    pFinal
+    {
+        $p;
+        relTol          0.01;
+    }
+
+    "(U|h|e|k|epsilon|R)"
+    {
+        solver          PBiCGStab;
+        preconditioner  DILU;
+        tolerance       1e-06;
+        relTol          0.01;
+    }
+
+    "(U|h|e|k|epsilon|R)Final"
+    {
+        $U;
+        relTol          0;
+    }
+}
+
+SIMPLE
+{
+    momentumPredictor yes;
+    nOuterCorrectors 1;
+    nCorrectors     1;
+    nNonOrthogonalCorrectors 1;
+}
+
+relaxationFactors
+{
+    fields
+    {
+        p          0.3;
+    }
+    equations
+    {
+        U               0.4;
+        T               0.4;
+        k               0.4;
+        epsilon         0.4;
+        h               0.4;
+    }
+}
+
+"""
+
 _FVSCHEMES = {
     "incompressibleFluid_limitedLinear": _FVSCHEMES_BODY,
     "incompressibleFluid_upwind": _FVSCHEMES_UPWIND,
+    "compressibleFluid_steadyState": _FVSCHEMES_COMPRESSIBLE_STEADY,
 }
 _FVSOLUTION = {
     "incompressibleFluid_limitedLinear": _FVSOLUTION_BODY,
     "incompressibleFluid_upwind": _FVSOLUTION_UPWIND,
+    "compressibleFluid_steadyState": _FVSOLUTION_COMPRESSIBLE_STEADY,
 }
 
 
@@ -322,6 +445,20 @@ def render_fvsolution(spec: CaseSpec) -> str:
 
 def render_physicalproperties(spec: CaseSpec) -> str:
     f = spec.fluid
+    if f.flow_type == "compressible":
+        from .spec import ThermoProperties
+        t = f.thermo or ThermoProperties()
+        thermo_entries = "\n".join(_kv(k, v, indent=4) for k, v in t.thermo_type.items())
+        body = (
+            f"\nthermoType\n{{\n{thermo_entries}\n}}\n\n"
+            f"{_kv('pRef', _num(t.p_ref))}\n\n"
+            f"mixture\n{{\n"
+            f"    specie\n    {{\n{_kv('molWeight', _num(t.mol_weight), indent=8)}\n    }}\n"
+            f"    thermodynamics\n    {{\n{_kv('Cp', _num(t.cp), indent=8)}\n{_kv('hf', _num(t.hf), indent=8)}\n    }}\n"
+            f"    transport\n    {{\n{_kv('mu', _num(t.mu), indent=8)}\n{_kv('Pr', _num(t.pr), indent=8)}\n    }}\n"
+            f"}}\n"
+        )
+        return f"{_header('dictionary', 'physicalProperties', 'constant')}\n{body}\n{FOOTER}\n"
     comment = f"// {f.comment}\n" if f.comment else ""
     body = f"\n{_kv('viscosityModel', f.viscosity_model)}\n\n{comment}{_kv('nu', f.nu)}\n"
     return f"{_header('dictionary', 'physicalProperties', 'constant')}\n{body}\n{FOOTER}\n"

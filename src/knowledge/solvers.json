@@ -1,0 +1,26 @@
+{
+  "solvers": [
+    {
+      "name": "incompressibleFluid",
+      "flow_type": "incompressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "Standard OpenFOAM v13 solver module for single-phase incompressible Newtonian fluids.",
+      "required_fields": ["U", "p"],
+      "turbulent_fields": ["k", "epsilon", "nut"],
+      "pressure_dimensions": [0, 2, -2, 0, 0, 0, 0],
+      "pressure_unit": "m^2/s^2 (kinematic pressure)",
+      "default_numerics": "incompressibleFluid_limitedLinear"
+    },
+    {
+      "name": "fluid",
+      "flow_type": "compressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "General OpenFOAM v13 solver module for compressible, thermal, and high-speed gas flows.",
+      "required_fields": ["U", "p", "T"],
+      "turbulent_fields": ["k", "epsilon", "nut", "alphat"],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (static pressure)",
+      "default_numerics": "compressibleFluid_steadyState"
+    }
+  ]
+}

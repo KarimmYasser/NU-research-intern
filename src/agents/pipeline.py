@@ -23,20 +23,27 @@ from .case import CaseFiles
 from .intent import CaseIntent, intent_to_spec
 from .llm_client import LLMConfig, make_client
 from .mesh_io import MeshPatch, copy_polymesh, load_external_mesh
+from .rag import KnowledgeRetriever
 from .renderer import render
+from .skills import SkillRegistry
 from .validation_agent import ValidationAgent, ValidationResult
 
 _SCHEMA = """{
   "regime": "laminar" | "turbulent",
-  "nu": number,                     // kinematic viscosity, m^2/s
+  "flow_type": "incompressible" | "compressible",  // optional, default "incompressible"
+  "solver_mode": "transient" | "steadyState",       // optional, default "transient"
+  "nu": number,                                      // kinematic viscosity, m^2/s (incompressible)
+  "p_ambient": number,                               // ambient/reference pressure, Pa (compressible)
+  "temperature": number,                             // reference temperature, K (compressible)
   "geometry": "box" | "external_mesh",
-  "box_size": [Lx, Ly, Lz],         // meters; required when geometry is "box"
-  "cells": [Nx, Ny, Nz],            // optional, default [20, 20, 1]
+  "box_size": [Lx, Ly, Lz],                          // meters; required when geometry is "box"
+  "cells": [Nx, Ny, Nz],                             // optional, default [20, 20, 1]
   "patches": [
     { "name": string,
-      "role": "inlet" | "outlet" | "wall" | "movingWall" | "empty",
-      "velocity": [x, y, z],        // only for inlet / movingWall
-      "pressure": number }          // only for outlet (gauge pressure)
+      "role": "inlet" | "outlet" | "wall" | "movingWall" | "empty" | "cyclic",
+      "velocity": [x, y, z],                         // only for inlet / movingWall
+      "pressure": number,                            // gauge or absolute Pa
+      "temperature": number }                        // inlet / wall temperature [K]
   ]
 }"""
 
@@ -66,7 +73,11 @@ _RESPONSE_FORMAT = {
             "type": "object",
             "properties": {
                 "regime": {"type": "string", "enum": ["laminar", "turbulent"]},
+                "flow_type": {"type": "string", "enum": ["incompressible", "compressible"]},
+                "solver_mode": {"type": "string", "enum": ["transient", "steadyState"]},
                 "nu": {"type": "number"},
+                "p_ambient": {"type": "number"},
+                "temperature": {"type": "number"},
                 "geometry": {"type": "string", "enum": ["box", "external_mesh"]},
                 "box_size": {"type": "array", "items": {"type": "number"}},
                 "cells": {"type": "array", "items": {"type": "integer"}},
@@ -77,15 +88,16 @@ _RESPONSE_FORMAT = {
                         "properties": {
                             "name": {"type": "string"},
                             "role": {"type": "string",
-                                     "enum": ["inlet", "outlet", "wall", "movingWall", "empty"]},
+                                     "enum": ["inlet", "outlet", "wall", "movingWall", "empty", "cyclic"]},
                             "velocity": {"type": "array", "items": {"type": "number"}},
                             "pressure": {"type": "number"},
+                            "temperature": {"type": "number"},
                         },
                         "required": ["name", "role"],
                     },
                 },
             },
-            "required": ["regime", "nu", "geometry", "box_size", "patches"],
+            "required": ["regime", "geometry", "patches"],
         },
     },
 }
@@ -140,23 +152,24 @@ def _chat_create(client, config: LLMConfig, messages: list[dict]):
 
 def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 3,
                     known_patches: list[MeshPatch] | None = None) -> CaseIntent:
-    """NL -> validated CaseIntent, with a repair/validate/retry loop.
-
-    When `known_patches` is given (patches read from a provided mesh's boundary
-    file - see mesh_io.py), the prompt is grounded with the real patch names so
-    the model assigns physics roles/values to them rather than inventing a box.
-    """
+    """NL -> validated CaseIntent with RAG context grounding and Skill enrichment."""
     config = config or LLMConfig()
     client = make_client(config)
-    user_content = nl + (_known_patches_hint(known_patches) if known_patches else "")
+
+    retriever = KnowledgeRetriever()
+    rag_context = retriever.format_prompt_context(nl)
+
+    user_content = nl + (_known_patches_hint(known_patches) if known_patches else "") + rag_context
     messages = [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": user_content}]
 
+    skill_registry = SkillRegistry()
     last_err = ""
     for _ in range(max_retries):
         resp = _chat_create(client, config, messages)
         raw = resp.choices[0].message.content or ""
         try:
-            return CaseIntent(**json.loads(_extract_json(raw)))
+            intent = CaseIntent(**json.loads(_extract_json(raw)))
+            return skill_registry.apply_skills(intent, nl, known_patches)
         except (json.JSONDecodeError, PydanticValidationError, TypeError) as e:
             last_err = str(e)
             messages += [
@@ -177,15 +190,7 @@ class PipelineResult:
 
 def generate(nl: str, case_dir: Path, config: LLMConfig | None = None,
              validate: bool = True, mesh_dir: Path | None = None) -> PipelineResult:
-    """Full pipeline: NL -> intent -> spec -> rendered files (-> optional run).
-
-    `mesh_dir`, when given, points at an externally-provided mesh (a polyMesh
-    directory, or a folder containing `boundary` directly - see mesh_io.py).
-    No mesh is generated in this repo (R1, docs/phase-ii-architecture.md §2.1):
-    the mesh's boundary file is read for patch names/types, the LLM is grounded
-    on those exact names, and the raw polyMesh files are copied unparsed into
-    the case. Validation then skips blockMesh, since the mesh already exists.
-    """
+    """Full pipeline: NL -> intent -> spec -> rendered files (-> optional run)."""
     known_patches = load_external_mesh(mesh_dir) if mesh_dir else None
     intent = extract_intent(nl, config, known_patches=known_patches)
     spec = intent_to_spec(intent)

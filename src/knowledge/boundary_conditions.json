@@ -1,0 +1,55 @@
+{
+  "boundary_conditions": [
+    {
+      "role": "cyclic",
+      "patch_type": "cyclic",
+      "description": "Coupled boundary condition for rotational or translational periodic sector geometries.",
+      "notes": "Used for meshed angular slices (e.g. 60° sectors of vortex tubes, turbines). Preserves tangential/swirling velocity components across sector faces.",
+      "field_rules": {
+        "all": {"type": "cyclic", "value": null}
+      }
+    },
+    {
+      "role": "inlet",
+      "patch_type": "patch",
+      "description": "Inflow boundary with specified velocity and temperature, zeroGradient pressure.",
+      "field_rules": {
+        "U": {"type": "fixedValue"},
+        "p": {"type": "zeroGradient"},
+        "T": {"type": "fixedValue"},
+        "k": {"type": "fixedValue"},
+        "epsilon": {"type": "fixedValue"},
+        "nut": {"type": "calculated", "value": "uniform 0"},
+        "alphat": {"type": "calculated", "value": "uniform 0"}
+      }
+    },
+    {
+      "role": "outlet",
+      "patch_type": "patch",
+      "description": "Outflow boundary with specified back-pressure, zeroGradient velocity and temperature.",
+      "field_rules": {
+        "U": {"type": "zeroGradient"},
+        "p": {"type": "fixedValue"},
+        "T": {"type": "zeroGradient"},
+        "k": {"type": "zeroGradient"},
+        "epsilon": {"type": "zeroGradient"},
+        "nut": {"type": "calculated", "value": "uniform 0"},
+        "alphat": {"type": "calculated", "value": "uniform 0"}
+      }
+    },
+    {
+      "role": "wall",
+      "patch_type": "wall",
+      "description": "Solid boundary with no-slip velocity and turbulence wall functions.",
+      "field_rules": {
+        "U": {"type": "noSlip"},
+        "p": {"type": "zeroGradient"},
+        "T": {"type": "zeroGradient"},
+        "k": {"type": "kqRWallFunction"},
+        "epsilon": {"type": "epsilonWallFunction"},
+        "nut": {"type": "nutkWallFunction"},
+        "alphat": {"type": "alphatJayatillekeWallFunction"}
+      }
+    }
+  ]
+}
