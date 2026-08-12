@@ -61,7 +61,7 @@ def test_vortex_tube_intent_to_spec():
         for field in field_names:
             bc = patch.bc[field]
             assert bc.type == "cyclic"
-            assert bc.value is None
+            assert bc.value in (None, "$internalField")
 
     # Walls patch should use wall functions for turbulence and thermal diffusivity
     walls = next(p for p in spec.patches if p.name == "walls")

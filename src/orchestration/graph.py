@@ -60,6 +60,7 @@ class CaseGraphState(TypedDict, total=False):
     validation: ValidationResult
 
     attempt: int
+    patch_attempt: int
     max_attempts: int
     error_feedback: Optional[str]  # last validation failure, fed back to extract_intent
     done: bool
@@ -134,8 +135,8 @@ def build_intent(state: CaseGraphState) -> dict:
     bc_ov_patches = [p.name for p in intent.patches if p.bc_overrides]
     if bc_ov_patches:
         print(f"      -> Agent BC overrides on patches: {bc_ov_patches}", flush=True)
-    # Clear stale overrides so render_case does a clean render on this attempt.
-    return {"intent": intent, "attempt": attempt, "file_overrides": None}
+    # Clear stale overrides and reset patch_attempt counter so render_case does a clean render.
+    return {"intent": intent, "attempt": attempt, "patch_attempt": 0, "file_overrides": None}
 
 
 def expand_spec(state: CaseGraphState) -> dict:
@@ -180,7 +181,8 @@ def patch_files(state: CaseGraphState) -> dict:
     re-running the full intent extraction, the agent reads the exact file that
     OpenFOAM rejected and returns corrected content as file_overrides.
     """
-    print(f"\n[Self-Correction] Querying LLM for targeted dictionary patch...", flush=True)
+    patch_attempt = state.get("patch_attempt", 0) + 1
+    print(f"\n[Self-Correction {patch_attempt}/3] Querying LLM for targeted dictionary patch...", flush=True)
     val_res = state.get("validation")
     err_fb = state.get("error_feedback", "")
     file_context = _collect_file_context(state)
@@ -193,7 +195,7 @@ def patch_files(state: CaseGraphState) -> dict:
 
     overrides = extract_file_patches(prompt, state.get("config"))
     print(f"      -> LLM returned patches for: {list(overrides.keys())}", flush=True)
-    return {"file_overrides": overrides}
+    return {"file_overrides": overrides, "patch_attempt": patch_attempt}
 
 
 def validate_case(state: CaseGraphState) -> dict:
@@ -219,10 +221,8 @@ def route_after_validate(state: CaseGraphState) -> str:
     """Route by failure class.
 
     ENVIRONMENT (Docker/infra) stops immediately — nothing the agent can do.
-    DICTIONARY_SYNTAX takes a targeted fix path (patch_files) rather than
-    re-running the full intent pipeline: the LLM reads the exact failing file
-    and emits corrected content. This handles renderer coverage gaps (e.g.
-    wrong wall-function name in an alphat BC) without discarding a good intent.
+    DICTIONARY_SYNTAX takes a targeted fix path (patch_files) up to 3 times per intent;
+    if patch limit is reached, falls back to build_intent for a full intent rebuild.
     All other LLM-owned failures (mesh/solver) go back to build_intent.
     """
     val = state.get("validation")
@@ -235,7 +235,9 @@ def route_after_validate(state: CaseGraphState) -> str:
         if FailureClass.ENVIRONMENT in classes:
             return END  # infra failure — stop, surface to operator
         if classes == {FailureClass.DICTIONARY_SYNTAX}:
-            return "patch_files"  # targeted file-level fix
+            if state.get("patch_attempt", 0) < 3:
+                return "patch_files"  # targeted file-level fix
+            print("      -> Max patch attempts reached for dictionary syntax errors. Falling back to full intent rebuild.", flush=True)
     return "build_intent"
 
 
@@ -243,6 +245,8 @@ def route_after_patch(state: CaseGraphState) -> str:
     """After file patching, re-render (apply overrides) and re-validate."""
     if state.get("attempt", 0) >= state.get("max_attempts", DEFAULT_MAX_ATTEMPTS):
         return END
+    if state.get("patch_attempt", 0) >= 3:
+        return "build_intent"
     return "render_case"
 
 

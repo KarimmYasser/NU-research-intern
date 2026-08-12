@@ -127,7 +127,7 @@ def _default_bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compr
 
     active_fields = ["U", "p"] + (["T", "alphat"] if compressible else []) + (["k", "epsilon", "nut"] if turbulent else [])
     if role in ("empty", "cyclic"):
-        return {f: FieldBC(type=role) for f in active_fields}
+        return {f: FieldBC(type=role, value="$internalField" if role == "cyclic" else None) for f in active_fields}
 
     bc: dict[str, FieldBC] = {}
     if role in ("inlet", "movingWall"):

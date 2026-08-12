@@ -32,7 +32,7 @@
       "type": "cyclic",
       "applicable_fields": ["U", "p", "T", "k", "epsilon", "omega", "nuTilda", "nut", "alphat", "h", "e"],
       "required_keys": [],
-      "optional_keys": [],
+      "optional_keys": ["value"],
       "description": "Periodic coupling — values mapped 1-to-1 to the matching cyclic patch."
     },
     {
