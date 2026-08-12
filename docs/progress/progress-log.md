@@ -2,7 +2,7 @@
 
 Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
-`docs/phase-ii-architecture.md` for the design this validates.
+`docs/architecture/phase-ii-architecture.md` for the design this validates.
 
 ## 2026-08-12 — Generalization, file-patching node, and architecture bug-triage
 

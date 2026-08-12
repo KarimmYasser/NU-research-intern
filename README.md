@@ -12,13 +12,16 @@ See `CLAUDE.md` for full project context (objectives, phases, KPIs) intended to 
 
 ## Structure
 
-- `docs/` — reference material and project documentation:
-  - `ConceptNote-1.pdf` — the authoritative project scope, timeline, and KPIs from the supervisor
-  - `openfoam-onboarding.md` + `openfoam/` — OpenFOAM case-structure and `blockMesh` onboarding, grounded in real files from the official OpenFOAM Foundation repo
-  - `vm-ollama-setup.md` — Phase I Ubuntu VM + OpenFOAM v13 + Ollama setup walkthrough
-  - `local-llm-backend-comparison.md` — Ollama vs vLLM vs alternatives for the project's local-LLM requirement
-  - `first-meeting-prep.md` — status summary + open questions for the supervisor
-- `src/` — early Phase II agent scaffold (Meshing / Physics / Syntax-Validation agent stubs + orchestrator). Stubs only, not yet runnable — see `src/README.md`.
+- `docs/` — reference material and project documentation, classified by topic (see `docs/README.md` for the index):
+  - `project/` — the authoritative scope, timeline, and KPIs (`ConceptNote-1.pdf`)
+  - `domain/` — OpenFOAM case-structure and `blockMesh` onboarding, grounded in real files from the official OpenFOAM Foundation repo
+  - `infrastructure/` — Phase I Ubuntu VM + OpenFOAM v13 + Ollama setup, and the local-LLM backend comparison
+  - `architecture/` — the Phase II engineering plan (structured-IR + deterministic renderer), framework decision, self-correction loop, and the RL-for-agent-skills research thread
+  - `supervision/` — supervisor-meeting prep and open questions
+  - `progress/` — session-by-session milestone and findings logs
+  - `guides/` — practical how-to-run guides
+  - `training/` — the Wolf Dynamics OpenFOAM decks and general NU material (PDFs)
+- `src/` — the Phase II architecture spike: a working NL→OpenFOAM-v13 pipeline (structured IR + deterministic renderer, case-type registry for 18 solver families, Docker validation ladder). See `src/README.md`.
 - `temp/` — scratch space (downloaded reference repos, literature-review PDFs, exploratory output). Gitignored — not part of version control. See `CLAUDE.md` for the convention.
 
-The `src/` scaffold is structural only (stubbed agents) pending the local-LLM VM and confirmation of direction at the first supervisor meeting; the runnable pipeline is Phase II work.
+The `src/` pipeline runs end-to-end today (NL → validated v13 case via a local LLM + Docker OpenFOAM). The remaining work is model-in-the-loop hardening and the eventual VM deploy — see `docs/README.md` and the progress log.

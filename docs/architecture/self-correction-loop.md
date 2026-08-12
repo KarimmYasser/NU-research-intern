@@ -45,7 +45,7 @@ has one of four owners, and only one is a retry-against-the-LLM:
 | **Renderer coverage gap** | wrong wall function type for a compressible BC (e.g. `alphatJayatillekeWallFunction`); file that the renderer doesn't fully cover | `patch_files` node: LLM reads the exact failing file, emits corrected content as `file_overrides` — targeted fix without discarding the intent |
 | **Deterministic code — renderer/expander bug** | a rendered dict is structurally malformed; wrong dimension or face-assignment in generated geometry | **stop and log for a human.** Retrying the LLM cannot fix *our* code |
 | **Environment** | Docker down, image missing, run timed out (`FailureClass.ENVIRONMENT`) | **stop, surface the infra error.** Not a case error at all |
-| **Out of scope — schema ceiling** | a geometry/solver the IR can't express | **stop, report "unsupported"** (or hand to the overflow path, `docs/phase-ii-architecture.md` §2) |
+| **Out of scope — schema ceiling** | a geometry/solver the IR can't express | **stop, report "unsupported"** (or hand to the overflow path, `docs/architecture/phase-ii-architecture.md` §2) |
 
 **Note on `DICTIONARY_SYNTAX` routing.** The design ideal is that a `DICTIONARY_SYNTAX`
 failure signals a *renderer bug* (the renderer should guarantee syntax). In practice the
@@ -57,7 +57,7 @@ patch_files` (LLM-assisted file-level fix) rather than stopping. `ENVIRONMENT` r
 hard stop since there is nothing the agent can do about infra failures.
 
 Misrouting matters twice over: it wastes the (few) retries a local model gets,
-and — once RL is added (`docs/rl-for-agent-skills.md`) — it **poisons the reward
+and — once RL is added (`docs/architecture/rl-for-agent-skills.md`) — it **poisons the reward
 signal** by blaming the policy for a code bug. So routing correctly is not
 optional polish; it's load-bearing for both the loop and the later RL.
 
@@ -155,7 +155,7 @@ render / run / route / revise; conditional edges on `FailureClass` + owner;
 ## 7. Connection to the RL / curriculum thread
 
 The self-correction loop **is the RL data generator**. Each pass produces a
-`(intent, reward)` trajectory (the ladder = reward, `docs/rl-for-agent-skills.md`).
+`(intent, reward)` trajectory (the ladder = reward, `docs/architecture/rl-for-agent-skills.md`).
 Two design choices here pay off there:
 
 - **Correct routing keeps the reward clean** — the policy is only credited/blamed

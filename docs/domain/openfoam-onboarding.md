@@ -1,10 +1,10 @@
 # OpenFOAM Onboarding — Start Here
 
-Rapid onboarding for Phase I of `ConceptNote-1.pdf`: OpenFOAM's case directory structure and standard meshing via `blockMesh`. Everything here is grounded in real files pulled from the official OpenFOAM Foundation repo (cloned locally to `temp/openfoam-repo/`, see below) — not paraphrased from a website.
+Rapid onboarding for Phase I of `docs/project/ConceptNote-1.pdf`: OpenFOAM's case directory structure and standard meshing via `blockMesh`. Everything here is grounded in real files pulled from the official OpenFOAM Foundation repo (cloned locally to `temp/openfoam-repo/`, see below) — not paraphrased from a website.
 
 ## Directed onboarding material (from Dr. Shaaban)
 
-At the first meeting the supervisor handed over two **Wolf Dynamics** training decks (in `docs/`), which are the standard third-party OpenFOAM course — treat these as the assigned Week 1–2 learning path:
+At the first meeting the supervisor handed over two **Wolf Dynamics** training decks (in `docs/training/`), which are the standard third-party OpenFOAM course — treat these as the assigned Week 1–2 learning path:
 
 - **`OpenFOAM® Introductory Training.pdf`** (2020 Edition) — the hands-on, case-driven course (run the tutorial cases via the `run_*.sh` scripts, learn the CLI).
 - **`Introduction to the FVM method.pdf`** (Feb 2022) — the theory course: FVM discretization, Navier–Stokes & pressure–velocity coupling, CFL, steady vs unsteady, residuals, boundary/initial-condition selection. This is also direct domain grounding for the **Physics Agent** — the choices it explains (which BC/IC, which coupling, CFL limits) are exactly what that agent has to get right.
@@ -13,9 +13,9 @@ At the first meeting the supervisor handed over two **Wolf Dynamics** training d
 
 ## Read in this order
 
-1. **[`docs/openfoam/case-structure.md`](openfoam/case-structure.md)** — the `0/`, `constant/`, `system/` anatomy, with every file from the real `cavity` tutorial reproduced and annotated line by line.
-2. **[`docs/openfoam/blockmesh.md`](openfoam/blockmesh.md)** — `blockMeshDict` anatomy: the minimal cavity example annotated in full, plus an advanced curved-geometry example, plus the utility's own CLI options straight from its source file.
-3. **[`docs/openfoam/command-reference.md`](openfoam/command-reference.md)** — command cheatsheet, including the v13 solver-execution convention (important — see below).
+1. **[`docs/domain/openfoam/case-structure.md`](openfoam/case-structure.md)** — the `0/`, `constant/`, `system/` anatomy, with every file from the real `cavity` tutorial reproduced and annotated line by line.
+2. **[`docs/domain/openfoam/blockmesh.md`](openfoam/blockmesh.md)** — `blockMeshDict` anatomy: the minimal cavity example annotated in full, plus an advanced curved-geometry example, plus the utility's own CLI options straight from its source file.
+3. **[`docs/domain/openfoam/command-reference.md`](openfoam/command-reference.md)** — command cheatsheet, including the v13 solver-execution convention (important — see below).
 
 ## The one thing that will trip you up immediately
 

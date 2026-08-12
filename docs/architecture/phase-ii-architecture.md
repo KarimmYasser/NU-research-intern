@@ -8,7 +8,7 @@ Our engineering plan for the multi-agent pipeline (ConceptNote Phase II), ground
 
 ## 1. The one fact that reframes everything
 
-**Every published system, Foam-Agent included, targets Foundation OpenFOAM v10 (or older). None targets v13.** Foam-Agent's README is explicit that only v10 is validated; its RAG corpus, prompt vocabulary, and error-parser regexes are all v10. We confirmed at the first meeting that **our project targets v13** (see [`first-meeting-prep.md`](first-meeting-prep.md)). So we cannot lift a prior system's knowledge base or prompts wholesale — the file names and run mechanics differ:
+**Every published system, Foam-Agent included, targets Foundation OpenFOAM v10 (or older). None targets v13.** Foam-Agent's README is explicit that only v10 is validated; its RAG corpus, prompt vocabulary, and error-parser regexes are all v10. We confirmed at the first meeting that **our project targets v13** (see [`../supervision/first-meeting-prep.md`](../supervision/first-meeting-prep.md)). So we cannot lift a prior system's knowledge base or prompts wholesale — the file names and run mechanics differ:
 
 | v10 (all prior work) | v13 (us) | Where it bites |
 |---|---|---|

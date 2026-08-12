@@ -5,7 +5,7 @@ docs/phase-ii-architecture.md §2): the LLM reasons about physics and emits a
 *validated* CaseSpec; deterministic code in renderer.py turns it into
 guaranteed-valid OpenFOAM v13 files. The model never writes dictionary syntax.
 
-Everything here is v13 convention (see docs/openfoam/case-structure.md):
+Everything here is v13 convention (see docs/domain/openfoam/case-structure.md):
 - `solver` is a v13 solver *module* named in controlDict (incompressibleFluid,
   ...), NOT an old solver binary (icoFoam, simpleFoam, pisoFoam).
 - properties live in constant/physicalProperties + constant/momentumTransport.

@@ -13,7 +13,7 @@ from pathlib import Path
 class CaseFiles:
     """Maps OpenFOAM case-relative paths to file contents.
 
-    File names follow OpenFOAM v13 conventions (see docs/openfoam/case-structure.md):
+    File names follow OpenFOAM v13 conventions (see docs/domain/openfoam/case-structure.md):
     constant/physicalProperties and constant/momentumTransport, NOT the older
     transportProperties/turbulenceProperties used in most pre-v13 tutorials and
     in the LLM+CFD papers in the literature review (temp/paper-research-agentic-cfd-llm/).

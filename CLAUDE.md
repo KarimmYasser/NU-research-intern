@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-This is the working directory for a Nile University (NU) Summer Research Internship project, **SESC-2026-02**, under the Smart Engineering Systems Research Center (SESC). It holds reference/onboarding documentation (`docs/`) plus an early Phase II agent scaffold (`src/`) — but no runnable pipeline yet: the scaffold is stubs, pending the local-LLM VM and the first supervisor meeting. Update the build/run/test guidance here once the pipeline actually executes.
+This is the working directory for a Nile University (NU) Summer Research Internship project, **SESC-2026-02**, under the Smart Engineering Systems Research Center (SESC). It holds reference/onboarding documentation (`docs/`) plus the Phase II architecture spike (`src/`): an NL→OpenFOAM-v13 pipeline that already runs end-to-end against a local LLM + Docker, kept at spike maturity until the VM deployment and the remaining supervisor decisions land.
 
 - **Intern:** Karim Yasser (Computer Engineering, Cairo University)
 - **Supervisor:** Dr. Mahmoud Mohamed Shaaban (SESC, Mashaaban@nu.edu.eg)
 - **Co-intern on the same track:** Malak Wahid Farid
 - **Duration:** 15 July – 1 Sept 2026 (8 weeks)
 
-## Project goal (per `docs/ConceptNote-1.pdf`)
+## Project goal (per `docs/project/ConceptNote-1.pdf`)
 
 Build an autonomous **multi-agent AI pipeline** that translates plain-English descriptions of a physical problem into a ready-to-run **OpenFOAM** CFD case directory, using a locally hosted LLM (no external API calls — infrastructure must stay on an isolated Ubuntu VM).
 
@@ -33,21 +33,25 @@ Corresponding KPIs: working Ubuntu VM + local LLM API (end of Week 2), pipeline 
 
 ## Repo layout & key docs
 
-- `docs/ConceptNote-1.pdf` — authoritative source for the project scope, timeline, and KPIs above; consult it directly for anything not summarized here.
-- `docs/openfoam-onboarding.md` — start here for OpenFOAM; indexes `docs/openfoam/{case-structure,blockmesh,command-reference}.md` (all grounded in the real v13 repo, not blog paraphrase).
-- `docs/vm-ollama-setup.md` — Phase I Ubuntu VM + OpenFOAM v13 + Ollama walkthrough (the Week 2 KPI).
-- `docs/local-llm-backend-comparison.md` — Ollama vs vLLM vs alternatives; recommends starting with Ollama.
-- `docs/first-meeting-prep.md` — status + open questions for the supervisor. OpenFOAM version RESOLVED → v13; still open: VM/GPU, work split with Malak, deliverable cadence.
-- `docs/phase-ii-architecture.md` — the Phase II engineering plan: LangGraph pipeline built on a **structured IR + deterministic renderer** ("reason free, constrain late" — the LLM emits a typed `CaseSpec`, code renders guaranteed-valid v13 files), the validation ladder + self-healing loop, and the meshing verdict. Grounded in the Foam-Agent teardown + the Constraint Tax finding; departs from raw-text generation because our model is local/weak.
-- `docs/agent-framework-comparison.md` — framework decision: recommends LangGraph (Pydantic AI runner-up); explains why off-the-shelf agents (Hermes, pi) don't fit.
-- `docs/rl-for-agent-skills.md` — exploratory research thread: applying RL / verifiable-reward self-improvement, using the validation ladder as the reward signal.
-- `docs/self-correction-loop.md` — design of the dry-run self-correction loop: it corrects *intent* not text, and routes failures by owner (LLM-fixable vs renderer bug vs infra vs out-of-scope).
-- `docs/OpenFOAM® Introductory Training.pdf`, `docs/Introduction to the FVM method.pdf` — Wolf Dynamics training decks the supervisor assigned as onboarding (OpenFOAM 9 — old convention; mind the v13 gap). Tracked via Git LFS.
+Docs are organized into topic folders under `docs/`; `docs/README.md` is the index.
+
+- `docs/project/ConceptNote-1.pdf` — authoritative source for the project scope, timeline, and KPIs above; consult it directly for anything not summarized here. **Nothing is ever moved out of `docs/project/`.**
+- `docs/domain/openfoam-onboarding.md` — start here for OpenFOAM; indexes `docs/domain/openfoam/{case-structure,blockmesh,command-reference}.md` (all grounded in the real v13 repo, not blog paraphrase).
+- `docs/infrastructure/vm-ollama-setup.md` — Phase I Ubuntu VM + OpenFOAM v13 + Ollama walkthrough (the Week 2 KPI).
+- `docs/infrastructure/local-llm-backend-comparison.md` — Ollama vs vLLM vs alternatives; recommends starting with Ollama.
+- `docs/supervision/first-meeting-prep.md` — status + open questions for the supervisor. OpenFOAM version RESOLVED → v13; still open: VM/GPU, work split with Malak, deliverable cadence.
+- `docs/architecture/phase-ii-architecture.md` — the Phase II engineering plan: LangGraph pipeline built on a **structured IR + deterministic renderer** ("reason free, constrain late" — the LLM emits a typed `CaseSpec`, code renders guaranteed-valid v13 files), the validation ladder + self-healing loop, and the meshing verdict. Grounded in the Foam-Agent teardown + the Constraint Tax finding; departs from raw-text generation because our model is local/weak.
+- `docs/architecture/agent-framework-comparison.md` — framework decision: recommends LangGraph (Pydantic AI runner-up); explains why off-the-shelf agents (Hermes, pi) don't fit.
+- `docs/architecture/rl-for-agent-skills.md` — exploratory research thread: applying RL / verifiable-reward self-improvement, using the validation ladder as the reward signal.
+- `docs/architecture/self-correction-loop.md` — design of the dry-run self-correction loop: it corrects *intent* not text, and routes failures by owner (LLM-fixable vs renderer bug vs infra vs out-of-scope).
+- `docs/progress/progress-log.md` — running milestone log for the `src/` spike; append new sessions at the top.
+- `docs/guides/` — agent-usage-guide.md + new-workflow.md (practical how-to-run).
+- `docs/training/` — the Wolf Dynamics OpenFOAM training decks + general NU orientation material (PDFs, OpenFOAM 9 — old convention; mind the v13 gap). Tracked via Git LFS.
 - `src/` — **experimental architecture spike (NOT the deliverable)**. Proves the Phase II design end-to-end: a plain-English prompt becomes an OpenFOAM v13 case that actually runs, via a local LLM + Docker OpenFOAM (no VM, no external API). Kept at spike maturity on purpose; the real implementation is (re)built deliberately later. See `src/README.md` for the status banner.
-- `docs/Internship Orientation Opening.pdf`, `docs/Using AI in Scientific Research.pdf` — general NU material, not project-specific.
+  - `src/ir/case_types.py` — the **case-type registry**: 18 solver families (incompressibleFluid, fluid, fluid_buoyant, incompressible/compressible(-Multiphase)VoF, incompressibleDriftFlux, multiphaseEuler, incompressibleDenseParticleFluid, film/isothermalFilm, isothermalFluid, shockFluid, solidDisplacement, multicomponentFluid, XiFluid, movingMesh). `intent_to_spec` dispatches on it to emit the exact 0/ field set and constant/ layer per family, grounded in the v13 tutorials.
 - `temp/paper-research-agentic-cfd-llm/` — 40-paper literature review (gitignored); see its `findings.md`.
-- `temp/rl-agentic-research/` — RL-for-agents research scratch (gitignored); feeds `docs/rl-for-agent-skills.md`.
-- `temp/repr-arch-research/` — case-representation (IR vs raw-text) research scratch (gitignored); feeds `docs/phase-ii-architecture.md` §2.
+- `temp/rl-agentic-research/` — RL-for-agents research scratch (gitignored); feeds `docs/architecture/rl-for-agent-skills.md`.
+- `temp/repr-arch-research/` — case-representation (IR vs raw-text) research scratch (gitignored); feeds `docs/architecture/phase-ii-architecture.md` §2.
 
 ## `temp/` — scratch space
 

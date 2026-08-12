@@ -1,6 +1,6 @@
 # src/ — Phase II Architecture Implementation
 
-Multi-agent OpenFOAM CFD case-generation pipeline based on a **structured IR + deterministic renderer** architecture ("reason free, constrain late" — see `docs/phase-ii-architecture.md` §2): the LLM emits a compact validated intent, deterministic code renders guaranteed-valid OpenFOAM v13 files, and the case is validated by *actually running it* in an OpenFOAM v13 Docker container (`microfluidica/openfoam:13`).
+Multi-agent OpenFOAM CFD case-generation pipeline based on a **structured IR + deterministic renderer** architecture ("reason free, constrain late" — see `docs/architecture/phase-ii-architecture.md` §2): the LLM emits a compact validated intent, deterministic code renders guaranteed-valid OpenFOAM v13 files, and the case is validated by *actually running it* in an OpenFOAM v13 Docker container (`microfluidica/openfoam:13`).
 
 ## Sub-Package Architecture
 

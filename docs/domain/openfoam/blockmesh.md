@@ -80,7 +80,7 @@ Line by line:
   - `wall` — a solid boundary (used for both `movingWall` and `fixedWalls` here; the actual velocity behavior — moving vs. fixed — is set separately in `0/U`, not here. `blockMeshDict` only defines geometry and patch *type*, never physics.)
   - `empty` — marks `frontAndBack` as not resolved (this is what makes the case 2D despite having a real 3D mesh with 1 cell of depth).
 
-**The single most important cross-file rule**: the patch names here (`movingWall`, `fixedWalls`, `frontAndBack`) must appear as *exactly* the same strings in every field file's `boundaryField` block (`0/U`, `0/p`, etc. — see `docs/openfoam/case-structure.md`). A mismatch here is probably the single most common category of bug in an LLM-generated case, and it's silent until the solver refuses to start.
+**The single most important cross-file rule**: the patch names here (`movingWall`, `fixedWalls`, `frontAndBack`) must appear as *exactly* the same strings in every field file's `boundaryField` block (`0/U`, `0/p`, etc. — see `docs/domain/openfoam/case-structure.md`). A mismatch here is probably the single most common category of bug in an LLM-generated case, and it's silent until the solver refuses to start.
 
 ## Advanced example: named/projected vertices (`tutorials/mesh/blockMesh/pipe`)
 

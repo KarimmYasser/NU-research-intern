@@ -3,9 +3,9 @@
 ## What's done so far (Week 1, before infrastructure exists)
 
 - Read and internalized `ConceptNote-1.pdf` — 8-week plan, 4 phases, KPIs.
-- OpenFOAM onboarding (`docs/openfoam/`) — case structure (`0/`, `constant/`, `system/`) and `blockMesh`, verified against the actual OpenFOAM Foundation v13 repo (not just tutorials/blog posts).
+- OpenFOAM onboarding (`docs/domain/openfoam/`) — case structure (`0/`, `constant/`, `system/`) and `blockMesh`, verified against the actual OpenFOAM Foundation v13 repo (not just tutorials/blog posts).
 - Literature review (`temp/paper-research-agentic-cfd-llm/`) — 40 papers covering the existing LLM+OpenFOAM agent systems (OpenFOAMGPT, Foam-Agent, MetaOpenFOAM, ChatCFD, SwarmFoam, etc.), self-correction/retry-loop design, and structured-JSON-output reliability on local models.
-- Local LLM backend comparison (`docs/local-llm-backend-comparison.md`) — Ollama vs vLLM vs SGLang, with a recommendation (start with Ollama for the Week 2 milestone, since it's hardware-agnostic).
+- Local LLM backend comparison (`docs/infrastructure/local-llm-backend-comparison.md`) — Ollama vs vLLM vs SGLang, with a recommendation (start with Ollama for the Week 2 milestone, since it's hardware-agnostic).
 - Private GitHub repo set up: https://github.com/KarimmYasser/NU-research-intern
 
 ## Open questions worth asking him directly
@@ -15,7 +15,7 @@
 
 **OpenFOAM version** — ✅ RESOLVED at meeting: target **v13**.
 - The current OpenFOAM.org release (v13) renamed key files (`transportProperties`→`physicalProperties`, `turbulenceProperties`→`momentumTransport`) and changed how cases are run (`controlDict`'s `solver` field replaces picking a binary like `icoFoam`). Nearly all published LLM-agent papers target the *older* convention.
-- **Outcome:** the project targets v13. Gotcha to carry forward: the supervisor's own onboarding decks (`docs/OpenFOAM® Introductory Training.pdf`, `docs/Introduction to the FVM method.pdf`) are **Wolf Dynamics / OpenFOAM 9** (old convention), as is the entire literature review — so both learning sources pull toward the old filenames while the pipeline must emit v13. See `docs/openfoam-onboarding.md` for the translation.
+- **Outcome:** the project targets v13. Gotcha to carry forward: the supervisor's own onboarding decks (`docs/training/OpenFOAM® Introductory Training.pdf`, `docs/training/Introduction to the FVM method.pdf`) are **Wolf Dynamics / OpenFOAM 9** (old convention), as is the entire literature review — so both learning sources pull toward the old filenames while the pipeline must emit v13. See `docs/domain/openfoam-onboarding.md` for the translation.
 
 **VM / hardware**
 - Does the isolated Ubuntu VM have a GPU? This directly decides Ollama-only-CPU vs vLLM/SGLang being viable, and which local models are even usable.

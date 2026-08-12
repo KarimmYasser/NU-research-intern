@@ -28,4 +28,4 @@ Know which convention your generated case is targeting — mixing the two (e.g. 
 
 ## Where these appear in the case structure
 
-See `docs/openfoam/case-structure.md` for what each dictionary (`0/U`, `0/p`, `constant/physicalProperties`, `constant/momentumTransport`, `system/controlDict`, `system/fvSchemes`, `system/fvSolution`) actually contains, and `docs/openfoam/blockmesh.md` for the full `blockMeshDict` breakdown.
+See `docs/domain/openfoam/case-structure.md` for what each dictionary (`0/U`, `0/p`, `constant/physicalProperties`, `constant/momentumTransport`, `system/controlDict`, `system/fvSchemes`, `system/fvSolution`) actually contains, and `docs/domain/openfoam/blockmesh.md` for the full `blockMeshDict` breakdown.
