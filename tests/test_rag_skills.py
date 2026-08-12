@@ -7,10 +7,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agents.intent import CaseIntent, PatchIntent
-from agents.mesh_io import MeshPatch
-from agents.rag import KnowledgeRetriever
-from agents.skills import CompressibleSwirlingFlowSkill, ExternalMeshPatchSkill, SkillRegistry
+from ir import CaseIntent, PatchIntent
+from knowledge import CompressibleSwirlingFlowSkill, ExternalMeshPatchSkill, KnowledgeRetriever, SkillRegistry
+from mesh import MeshPatch
 
 
 def test_rag_search():

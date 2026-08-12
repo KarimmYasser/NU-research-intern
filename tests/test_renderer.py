@@ -14,8 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agents.renderer import BANNER, FOOTER, render
-from agents.spec import (
+from ir import (
     BoxGeometry,
     CaseSpec,
     ExternalMesh,
@@ -26,6 +25,7 @@ from agents.spec import (
     TimeControl,
     TurbulenceRAS,
 )
+from rendering import BANNER, FOOTER, render
 
 
 def cavity_spec() -> CaseSpec:

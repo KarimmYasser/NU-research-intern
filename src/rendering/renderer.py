@@ -12,8 +12,8 @@ enough to render the cavity tutorial exactly. Wider coverage extends this.
 
 from __future__ import annotations
 
+from ir.spec import BoxGeometry, CaseSpec, Field, Patch
 from .case import CaseFiles
-from .spec import BoxGeometry, CaseSpec, Field, Patch
 
 # The standard OpenFOAM banner (matches the .org v13 tutorials verbatim).
 BANNER = r"""/*--------------------------------*- C++ -*----------------------------------*\
@@ -368,6 +368,7 @@ solvers
         smoother        GaussSeidel;
         tolerance       1e-06;
         relTol          0.01;
+        maxIter         50;
         cacheAgglomeration true;
         nCellsInCoarsestLevel 1000;
         agglomerator    faceAreaPair;
@@ -434,19 +435,25 @@ _FVSOLUTION = {
 
 
 def render_fvschemes(spec: CaseSpec) -> str:
-    body = _FVSCHEMES[spec.numerics]
+    if spec.custom_fv_schemes:
+        body = spec.custom_fv_schemes
+    else:
+        body = _FVSCHEMES.get(spec.numerics, _FVSCHEMES["incompressibleFluid_limitedLinear"])
     return f"{_header('dictionary', 'fvSchemes', 'system')}\n{body}\n{FOOTER}\n"
 
 
 def render_fvsolution(spec: CaseSpec) -> str:
-    body = _FVSOLUTION[spec.numerics]
+    if spec.custom_fv_solution:
+        body = spec.custom_fv_solution
+    else:
+        body = _FVSOLUTION.get(spec.numerics, _FVSOLUTION["incompressibleFluid_limitedLinear"])
     return f"{_header('dictionary', 'fvSolution', 'system')}\n{body}\n{FOOTER}\n"
 
 
 def render_physicalproperties(spec: CaseSpec) -> str:
     f = spec.fluid
     if f.flow_type == "compressible":
-        from .spec import ThermoProperties
+        from ir.spec import ThermoProperties
         t = f.thermo or ThermoProperties()
         thermo_entries = "\n".join(_kv(k, v, indent=4) for k, v in t.thermo_type.items())
         body = (

@@ -48,7 +48,7 @@
         "k": {"type": "kqRWallFunction"},
         "epsilon": {"type": "epsilonWallFunction"},
         "nut": {"type": "nutkWallFunction"},
-        "alphat": {"type": "alphatJayatillekeWallFunction"}
+        "alphat": {"type": "compressible::alphatJayatillekeWallFunction"}
       }
     }
   ]

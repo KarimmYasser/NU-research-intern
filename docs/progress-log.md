@@ -4,6 +4,51 @@ Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
 `docs/phase-ii-architecture.md` for the design this validates.
 
+## 2026-08-12 — Generalization, file-patching node, and architecture bug-triage
+
+**What changed this session:**
+
+- **Generalization (multi-species thermophysics):** Added `fluid_species` field to `CaseIntent`
+  (and to `_SCHEMA`/`_RESPONSE_FORMAT` in `pipeline.py` so the LLM can actually emit it).
+  `intent_to_spec()` resolves species tokens to thermophysical constants (Cp, μ, Pr, Mw) via
+  `KnowledgeRetriever.get_species_thermo()`. Species library: air (default), N₂, CO₂, O₂, He,
+  H₂O vapour in `knowledge/thermophysics.json`.
+
+- **`patch_files` node (LangGraph):** New graph node for `DICTIONARY_SYNTAX` failures. Instead
+  of discarding a good intent and re-running the full pipeline, the node reads the exact failing
+  file(s) and calls `extract_file_patches()` — a separate, targeted LLM call that returns
+  `{"file_overrides": {"path": "corrected content"}}`. These overrides are then applied by the
+  next `render_case` call. Routing: `DICTIONARY_SYNTAX → patch_files`, `ENVIRONMENT → END`,
+  `MESH_*/SOLVER_* → build_intent`.
+
+- **`extract_file_patches()` in pipeline.py:** New function with its own `_PATCH_SYSTEM` prompt
+  and `_PATCH_RESPONSE_FORMAT` JSON schema. Returns `{}` on failure (non-raising) so the graph
+  can fall back gracefully.
+
+- **Stale `file_overrides` fix:** `build_intent` now explicitly returns `file_overrides: None`
+  to clear patches from a previous attempt before a fresh full render.
+
+- **`KnowledgeRetriever` singleton:** Replaced two fresh `KnowledgeRetriever()` instantiations
+  per `intent_to_spec()` call with a module-level `_RETRIEVER` singleton, eliminating repeated
+  disk reads during retries.
+
+- **`generate()` deprecated:** Marked with `DeprecationWarning`; `orchestration.graph.run()` is
+  the correct entry point for production use.
+
+- **Docs updated:** `agent-usage-guide.md` rewritten; `self-correction-loop.md` routing table
+  updated to reflect `patch_files` node; `findings-2026-08-12.md` written as a full session
+  findings log.
+
+**Test suite:** 41 tests, all passing (0.60 s). New tests added for the `patch_files` routing,
+`ENVIRONMENT → END` stop, stale-override clearing, species thermo resolution, and file override
+application.
+
+**Status:** End-to-end run not re-attempted this session (Docker validation pending). The
+`alphatJayatillekeWallFunction` failure from the previous session should now be resolved by
+the `patch_files` node on the next live run.
+
+---
+
 ## 2026-08-03 — First real end-to-end run against the mentor's RHVT mesh
 
 **What changed this session:**

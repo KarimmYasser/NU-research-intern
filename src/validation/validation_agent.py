@@ -16,6 +16,7 @@ temp/paper-research-agentic-cfd-llm/pdfs/2606.03852_FLARE.pdf.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
@@ -62,9 +63,29 @@ class ValidationResult:
 
 
 class ValidationAgent:
+    _CHECKED_MESHES: set[str] = set()
+
     def __init__(self, image: str = DEFAULT_IMAGE, timeout: int = DEFAULT_TIMEOUT):
         self.image = image
         self.timeout = timeout
+
+    @classmethod
+    def clear_mesh_cache(cls) -> None:
+        """Clear cached checkMesh pass keys."""
+        cls._CHECKED_MESHES.clear()
+
+    def _get_mesh_key(self, case_dir: Path) -> str | None:
+        boundary = case_dir / "constant" / "polyMesh" / "boundary"
+        if not boundary.is_file():
+            boundary = case_dir / "boundary"
+        if boundary.is_file():
+            try:
+                content = boundary.read_bytes()
+                content_hash = hashlib.md5(content).hexdigest()
+                return f"{boundary.name}:{len(content)}:{content_hash}"
+            except OSError:
+                return str(boundary.resolve())
+        return None
 
     # --- ladder rungs -----------------------------------------------------
 
@@ -74,13 +95,19 @@ class ValidationAgent:
         errs = [] if ok else self.parse_errors(cp.stdout + cp.stderr, FailureClass.MESH_GENERATION)
         return ValidationResult(ok, "blockMesh", errs, cp.stdout + cp.stderr)
 
-    def run_check_mesh(self, case_dir: Path) -> ValidationResult:
+    def run_check_mesh(self, case_dir: Path, force: bool = False) -> ValidationResult:
+        key = self._get_mesh_key(case_dir)
+        if not force and key and key in self._CHECKED_MESHES:
+            return ValidationResult(True, "checkMesh", [], "checkMesh skipped (cached pass for static mesh)")
+
         cp = self._docker_run(case_dir, ["checkMesh"])
         out = cp.stdout + cp.stderr
         # checkMesh often exits 0 even on quality failures, so inspect the output:
         # it prints "***" lines and a "Failed N mesh checks." summary on failure.
         failed = cp.returncode != 0 or "***" in out or re.search(r"Failed \d+ mesh checks", out)
         if not failed:
+            if key:
+                self._CHECKED_MESHES.add(key)
             return ValidationResult(True, "checkMesh", [], out)
         return ValidationResult(False, "checkMesh",
                                 self.parse_errors(out, FailureClass.MESH_QUALITY), out)
@@ -103,6 +130,7 @@ class ValidationAgent:
             (self.run_check_mesh, self.run_solver) if skip_mesh_generation
             else (self.run_block_mesh, self.run_check_mesh, self.run_solver)
         )
+        result: ValidationResult = ValidationResult(True, "none")
         for rung in rungs:
             result = rung(case_dir)
             if not result.ok:

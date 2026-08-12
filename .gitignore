@@ -2,19 +2,44 @@
 # See CLAUDE.md for the temp/ convention. Not meant to be version-controlled.
 temp/
 
-# Local Claude Code settings (machine-specific)
+# Local settings and secrets - never commit
+.env
 .claude/settings.local.json
 
-# Secrets (API keys, endpoints) - never commit
-.env
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
 .venv/
 venv/
+env/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
 Lib/*
 Scripts/*
+
+# Logs & temporary files
+*.log
+*.tmp
+*.bak
+*.foam
+
+# Local IDE & Language Server Configs
+.vscode/
+pyrightconfig.json
+

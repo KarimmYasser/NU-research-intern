@@ -1,6 +1,7 @@
 {
   "thermophysics": [
     {
+      "species": "air",
       "model_name": "air_ideal_gas",
       "description": "Standard ideal gas thermophysical properties for air in OpenFOAM v13.",
       "thermoType": {
@@ -17,6 +18,106 @@
         "specie": {"molWeight": 28.966},
         "thermodynamics": {"Cp": 1008, "hf": 0},
         "transport": {"mu": 1.846e-05, "Pr": 0.71}
+      }
+    },
+    {
+      "species": "nitrogen",
+      "model_name": "nitrogen_ideal_gas",
+      "description": "Ideal gas thermophysical properties for N2 in OpenFOAM v13.",
+      "thermoType": {
+        "type": "heRhoThermo",
+        "mixture": "pureMixture",
+        "transport": "const",
+        "thermo": "hConst",
+        "equationOfState": "perfectGas",
+        "specie": "specie",
+        "energy": "sensibleEnthalpy"
+      },
+      "pRef": 0,
+      "mixture": {
+        "specie": {"molWeight": 28.013},
+        "thermodynamics": {"Cp": 1040, "hf": 0},
+        "transport": {"mu": 1.76e-05, "Pr": 0.73}
+      }
+    },
+    {
+      "species": "co2",
+      "model_name": "co2_ideal_gas",
+      "description": "Ideal gas thermophysical properties for CO2 in OpenFOAM v13.",
+      "thermoType": {
+        "type": "heRhoThermo",
+        "mixture": "pureMixture",
+        "transport": "const",
+        "thermo": "hConst",
+        "equationOfState": "perfectGas",
+        "specie": "specie",
+        "energy": "sensibleEnthalpy"
+      },
+      "pRef": 0,
+      "mixture": {
+        "specie": {"molWeight": 44.01},
+        "thermodynamics": {"Cp": 846, "hf": 0},
+        "transport": {"mu": 1.48e-05, "Pr": 0.76}
+      }
+    },
+    {
+      "species": "oxygen",
+      "model_name": "oxygen_ideal_gas",
+      "description": "Ideal gas thermophysical properties for O2 in OpenFOAM v13.",
+      "thermoType": {
+        "type": "heRhoThermo",
+        "mixture": "pureMixture",
+        "transport": "const",
+        "thermo": "hConst",
+        "equationOfState": "perfectGas",
+        "specie": "specie",
+        "energy": "sensibleEnthalpy"
+      },
+      "pRef": 0,
+      "mixture": {
+        "specie": {"molWeight": 31.999},
+        "thermodynamics": {"Cp": 918, "hf": 0},
+        "transport": {"mu": 2.04e-05, "Pr": 0.72}
+      }
+    },
+    {
+      "species": "helium",
+      "model_name": "helium_ideal_gas",
+      "description": "Ideal gas thermophysical properties for He in OpenFOAM v13.",
+      "thermoType": {
+        "type": "heRhoThermo",
+        "mixture": "pureMixture",
+        "transport": "const",
+        "thermo": "hConst",
+        "equationOfState": "perfectGas",
+        "specie": "specie",
+        "energy": "sensibleEnthalpy"
+      },
+      "pRef": 0,
+      "mixture": {
+        "specie": {"molWeight": 4.0026},
+        "thermodynamics": {"Cp": 5193, "hf": 0},
+        "transport": {"mu": 1.96e-05, "Pr": 0.67}
+      }
+    },
+    {
+      "species": "water_vapour",
+      "model_name": "water_vapour_ideal_gas",
+      "description": "Ideal gas thermophysical properties for steam/water vapour in OpenFOAM v13.",
+      "thermoType": {
+        "type": "heRhoThermo",
+        "mixture": "pureMixture",
+        "transport": "const",
+        "thermo": "hConst",
+        "equationOfState": "perfectGas",
+        "specie": "specie",
+        "energy": "sensibleEnthalpy"
+      },
+      "pRef": 0,
+      "mixture": {
+        "specie": {"molWeight": 18.015},
+        "thermodynamics": {"Cp": 1864, "hf": 0},
+        "transport": {"mu": 1.2e-05, "Pr": 0.98}
       }
     }
   ]

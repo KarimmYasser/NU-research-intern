@@ -33,3 +33,13 @@ class CaseFiles:
         for name, content in self.system.items():
             (case_dir / "system").mkdir(parents=True, exist_ok=True)
             (case_dir / "system" / name).write_text(content)
+
+
+def apply_file_overrides(case_dir: Path, overrides: dict[str, str]) -> None:
+    """Apply direct file content patches emitted by the agent to target case files."""
+    for rel_path, content in overrides.items():
+        if not rel_path or not content:
+            continue
+        p = case_dir / rel_path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)

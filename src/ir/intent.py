@@ -17,7 +17,14 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from knowledge.rag import KnowledgeRetriever
+
+# Module-level singleton: KnowledgeRetriever reads JSON files from disk on init;
+# re-instantiating it on every intent_to_spec() call wastes I/O on every retry.
+_RETRIEVER = KnowledgeRetriever()
+
 from .spec import (
+    BoxFace,
     BoxGeometry,
     CaseSpec,
     ExternalMesh,
@@ -45,6 +52,7 @@ class CaseIntent(BaseModel):
     regime: Literal["laminar", "turbulent"] = "turbulent"
     flow_type: Literal["incompressible", "compressible"] = "incompressible"
     solver_mode: Literal["transient", "steadyState"] = "transient"
+    fluid_species: str | None = None  # air, nitrogen, co2, oxygen, helium, water_vapour
     nu: float = 1e-05  # kinematic viscosity [m^2/s] (incompressible)
     p_ambient: float = 100000.0  # reference/operating pressure [Pa] (compressible)
     temperature: float = 300.0  # internal/inlet reference temperature [K]
@@ -56,12 +64,12 @@ class CaseIntent(BaseModel):
 
 # Box face assignment: fixed roles take canonical faces; wall patches share the
 # remaining side faces. Reproduces the cavity's movingWall/fixedWalls layout.
-_SIDE_FACES = ["xMin", "xMax", "yMin", "yMax"]
+_SIDE_FACES: list[BoxFace] = ["xMin", "xMax", "yMin", "yMax"]
 
 
-def _assign_faces(patches: list[PatchIntent]) -> dict[str, list[str]]:
-    faces: dict[str, list[str]] = {}
-    used: set[str] = set()
+def _assign_faces(patches: list[PatchIntent]) -> dict[str, list[BoxFace]]:
+    faces: dict[str, list[BoxFace]] = {}
+    used: set[BoxFace] = set()
     for p in patches:
         if p.role == "inlet":
             faces[p.name] = ["xMin"]; used.add("xMin")
@@ -71,7 +79,7 @@ def _assign_faces(patches: list[PatchIntent]) -> dict[str, list[str]]:
             faces[p.name] = ["yMax"]; used.add("yMax")
         elif p.role == "empty":
             faces[p.name] = ["zMin", "zMax"]
-    remaining = [f for f in _SIDE_FACES if f not in used]
+    remaining: list[BoxFace] = [f for f in _SIDE_FACES if f not in used]
     walls = [p for p in patches if p.role == "wall"]
     for i, p in enumerate(walls):
         faces[p.name] = [remaining[i]] if i < len(remaining) else []
@@ -130,7 +138,7 @@ def _bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compressible:
                 bc["T"] = FieldBC(type="fixedValue", value=f"uniform {_num(p.temperature)}")
             else:
                 bc["T"] = FieldBC(type="zeroGradient")
-            bc["alphat"] = FieldBC(type="alphatJayatillekeWallFunction", value="uniform 0")
+            bc["alphat"] = FieldBC(type="compressible::alphatJayatillekeWallFunction", value="uniform 0")
 
     if turbulent:
         wall_like = role in ("wall", "movingWall")
@@ -209,7 +217,19 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
 
     solver = "fluid" if compressible else "incompressibleFluid"
     if compressible:
-        fluid = FluidProperties(flow_type="compressible", thermo=ThermoProperties())
+        thermo_item = _RETRIEVER.get_species_thermo(intent.fluid_species)
+        if thermo_item and "mixture" in thermo_item:
+            mix = thermo_item["mixture"]
+            thermo = ThermoProperties(
+                mol_weight=mix.get("specie", {}).get("molWeight", 28.966),
+                cp=mix.get("thermodynamics", {}).get("Cp", 1008),
+                hf=mix.get("thermodynamics", {}).get("hf", 0),
+                mu=mix.get("transport", {}).get("mu", 1.846e-05),
+                pr=mix.get("transport", {}).get("Pr", 0.71),
+            )
+        else:
+            thermo = ThermoProperties()
+        fluid = FluidProperties(flow_type="compressible", thermo=thermo)
     else:
         fluid = FluidProperties(flow_type="incompressible", nu=f"{intent.nu:g} [m^2/s]")
 
@@ -219,6 +239,10 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
         numerics = "incompressibleFluid_upwind"
     else:
         numerics = "incompressibleFluid_limitedLinear"
+
+    tut_numerics = _RETRIEVER.get_tutorial_numerics(solver, "compressible" if compressible else "incompressible")
+    custom_schemes = tut_numerics.get("fvSchemes")
+    custom_solution = tut_numerics.get("fvSolution")
 
     return CaseSpec(
         solver=solver,
@@ -230,6 +254,8 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
         fluid=fluid,
         time=_time_control(intent),
         numerics=numerics,
+        custom_fv_schemes=custom_schemes if numerics not in ("incompressibleFluid_limitedLinear", "incompressibleFluid_upwind", "compressibleFluid_steadyState") else None,
+        custom_fv_solution=custom_solution if numerics not in ("incompressibleFluid_limitedLinear", "incompressibleFluid_upwind", "compressibleFluid_steadyState") else None,
     )
 
 

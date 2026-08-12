@@ -6,25 +6,43 @@ This guide explains how to run the multi-agent OpenFOAM case-generation pipeline
 
 ## 1. Quickstart CLI Usage
 
-Make sure your virtual environment (`.venv`) is set up and `PYTHONPATH` includes `src/`.
+Ensure your Python environment (e.g., Conda `sesc-agentic-cfd` or virtualenv) is active and `PYTHONPATH` includes `src/`.
 
-### Option A: Read Prompt from a Text File (Recommended)
+### macOS / Linux (Bash / Zsh)
+
+```bash
+export PYTHONPATH="src"
+python3 -m src run \
+    --mesh "temp/case-files" \
+    --case-dir "temp/out/my_case" \
+    --prompt-file "temp/case-files/requirements.txt"
+```
+
+### Windows (PowerShell)
 
 ```powershell
 $env:PYTHONPATH="src"
-.\.venv\Scripts\python.exe -m agents run `
+python -m src run `
     --mesh "temp/case-files" `
     --case-dir "temp/out/my_case" `
     --prompt-file "temp/case-files/requirements.txt"
 ```
 
+### Option A: Read Prompt from a Text File (Recommended)
+
+```bash
+python3 -m src run \
+    --mesh "temp/case-files" \
+    --case-dir "temp/out/my_case" \
+    --prompt-file "temp/case-files/requirements.txt"
+```
+
 ### Option B: Pass Prompt Directly as a String
 
-```powershell
-$env:PYTHONPATH="src"
-.\.venv\Scripts\python.exe -m agents run `
-    --mesh "temp/case-files" `
-    --case-dir "temp/out/my_case" `
+```bash
+python3 -m src run \
+    --mesh "temp/case-files" \
+    --case-dir "temp/out/my_case" \
     --prompt "I'm setting up a steady-state, compressible, turbulent RAS OpenFOAM case for a 60° vortex tube sector..."
 ```
 
@@ -32,11 +50,10 @@ $env:PYTHONPATH="src"
 
 Omitting both `--prompt` and `--prompt-file` starts interactive mode:
 
-```powershell
-$env:PYTHONPATH="src"
-.\.venv\Scripts\python.exe -m agents run --mesh "temp/case-files" --case-dir "temp/out/my_case"
+```bash
+python3 -m src run --mesh "temp/case-files" --case-dir "temp/out/my_case"
 ```
-*(Paste your text description, then press `Ctrl+Z` followed by `Enter` on Windows).*
+*(Paste your text description, then press `Ctrl+D` on macOS/Linux or `Ctrl+Z` followed by `Enter` on Windows).*
 
 ---
 
@@ -49,41 +66,16 @@ $env:PYTHONPATH="src"
 | `--prompt "<text>"` | No | Natural-language fluid simulation description. |
 | `--prompt-file <path>` | No | File path containing the prompt text. |
 | `--max-attempts <int>` | No | Maximum validation-and-retry attempts (default: `3`). |
-| `--model <model_name>` | No | LLM model override (e.g., `gpt-5-mini`, `qwen2.5:7b`). |
+| `--model <model_name>` | No | LLM model override (e.g., `gpt-4o`, `qwen2.5:7b`). |
 
 ---
 
 ## 3. Python API Integration
 
-### High-Level Pipeline (`pipeline.generate`)
+### Primary API: LangGraph Agent StateMachine (`orchestration.graph.run`)
 
-```python
-import sys
-from pathlib import Path
-
-# Add src to python path
-sys.path.insert(0, "src")
-
-from agents.pipeline import generate
-
-# 1. Load prompt text
-nl_prompt = Path("temp/case-files/requirements.txt").read_text()
-
-# 2. Execute pipeline
-result = generate(
-    nl=nl_prompt,
-    case_dir=Path("temp/out/my_case"),
-    mesh_dir=Path("temp/case-files"),
-    validate=True  # Runs Docker checkMesh & foamRun validation
-)
-
-print(f"Validation Status: {result.validation.ok}")
-print(f"Stage Reached: {result.validation.stage}")
-```
-
-### LangGraph Agent StateMachine (`graph.run`)
-
-To run the full validation-gated self-correction graph:
+The graph runner is the preferred entry point. It runs the full validation-gated
+self-correction loop including the `patch_files` node for targeted syntax fixes.
 
 ```python
 import sys
@@ -91,8 +83,8 @@ from pathlib import Path
 
 sys.path.insert(0, "src")
 
-from agents import graph
-from agents.llm_client import LLMConfig
+from llm import LLMConfig
+from orchestration import graph
 
 final_state = graph.run(
     nl=Path("temp/case-files/requirements.txt").read_text(),
@@ -103,14 +95,73 @@ final_state = graph.run(
 )
 
 print("Final State OK:", final_state["validation"].ok)
+if not final_state["validation"].ok:
+    for err in final_state["validation"].errors:
+        print(f"  [{err.failure_class.name}] {err.file_hint}: {err.message}")
+```
+
+### Legacy API: `orchestration.pipeline.generate` *(deprecated)*
+
+> **Deprecated.** `generate()` does not run the `patch_files` self-healing node
+> and does not clear stale file overrides across retries. Use `graph.run()` instead.
+
+```python
+from orchestration.pipeline import generate  # emits DeprecationWarning
+
+result = generate(
+    nl=nl_prompt,
+    case_dir=Path("temp/out/my_case"),
+    mesh_dir=Path("temp/case-files"),
+    validate=True
+)
 ```
 
 ---
 
 ## 4. How the Pipeline Works
 
-1. **Mesh Patch Grounding:** Reads `boundary` file from `--mesh` directory to learn exact patch names and geometric types (`wall`, `cyclic`, `patch`).
-2. **RAG Knowledge Search:** Queries `src/knowledge/v13_tutorials.json` (indexed from 252 official OpenFOAM v13 tutorials) to ground the prompt with authentic v13 solver names, field dimensions, and boundary condition guidelines.
-3. **Agent Skill Refinement:** Applies modular skills (`CompressibleSwirlingFlowSkill`, `ExternalMeshPatchSkill`) to map rotational symmetry boundaries to `cyclic` and select steady-state SIMPLE presets.
-4. **IR CaseSpec Expansion & Rendering:** Converts intent into a typed `CaseSpec` (Pydantic) and deterministically renders guaranteed-valid C++ dictionary files (`0/*`, `constant/*`, `system/*`).
-5. **Docker Validation Ladder:** Runs OpenFOAM v13 (`microfluidica/openfoam:13`) inside Docker to execute `checkMesh` and `foamRun`.
+The graph executes five nodes in a validation-gated state machine:
+
+```
+read_mesh → build_intent → expand_spec → render_case → validate_case
+                 ↑                                           |
+                 |             (DICTIONARY_SYNTAX)           |
+                 |         patch_files ←--------------------+
+                 |               |                           |
+                 +---(other) ----+                          END
+```
+
+1. **`read_mesh`** — Reads the `boundary` file from `--mesh` to learn exact patch names and types. Only the small boundary metadata is read; the full mesh stays on disk.
+
+2. **`build_intent`** — LLM call: NL prompt + real patch names + RAG context + (on retry) the prior error + failing file content → `CaseIntent`. Clears any stale `file_overrides` so retry gets a clean render.
+
+3. **`expand_spec`** — Deterministic `CaseIntent → CaseSpec` expansion (no LLM). Looks up per-species thermophysical properties (`fluid_species` field) and tutorial-based numerics from the knowledge base.
+
+4. **`render_case`** — Deterministic `CaseSpec → OpenFOAM files`. Writes `0/`, `constant/`, `system/`, copies `polyMesh/`, then applies any `file_overrides` on top.
+
+5. **`validate_case`** — Runs `checkMesh` then `foamRun` inside Docker (`microfluidica/openfoam:13`). Parses and classifies errors by `FailureClass`.
+
+### Error routing
+
+| Failure class | Next node | Why |
+|---|---|---|
+| `DICTIONARY_SYNTAX` | `patch_files` | LLM reads the exact failing file and emits corrected content — targeted fix without discarding a good intent |
+| `SOLVER_RUNTIME`, `MESH_*` | `build_intent` | Full intent re-extraction with the classified error and file content in context |
+| `ENVIRONMENT` | `END` | Docker/infra — nothing the agent can do; surface to operator |
+
+---
+
+## 5. Supported `fluid_species` Values
+
+For compressible cases, the LLM can emit `"fluid_species"` to select thermophysical properties from the built-in library:
+
+| Token | Fluid |
+|---|---|
+| `air` | Dry air (default) |
+| `nitrogen` | N₂ |
+| `co2` | CO₂ |
+| `oxygen` | O₂ |
+| `helium` | He |
+| `water_vapour` | H₂O vapour |
+
+These map to `ThermoProperties` (Cp, μ, Pr, Mw) in the `CaseSpec`. If omitted or unrecognised, air defaults are used.

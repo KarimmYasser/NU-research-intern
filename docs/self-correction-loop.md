@@ -42,17 +42,19 @@ has one of four owners, and only one is a retry-against-the-LLM:
 | Owner | Example | Correct action |
 |---|---|---|
 | **LLM — bad intent** | turbulence model wrong for the Reynolds number; `deltaT` too large → Courant blow-up; an incompatible/absent BC role; outlet pressure that makes the case ill-posed | revise `CaseIntent`, re-render, retry |
-| **Deterministic code — renderer/expander bug** | a rendered dict is malformed; the expander emitted a wrong dimension or a wrong face-assignment | **stop and log for a human.** Retrying the LLM cannot fix *our* code |
+| **Renderer coverage gap** | wrong wall function type for a compressible BC (e.g. `alphatJayatillekeWallFunction`); file that the renderer doesn't fully cover | `patch_files` node: LLM reads the exact failing file, emits corrected content as `file_overrides` — targeted fix without discarding the intent |
+| **Deterministic code — renderer/expander bug** | a rendered dict is structurally malformed; wrong dimension or face-assignment in generated geometry | **stop and log for a human.** Retrying the LLM cannot fix *our* code |
 | **Environment** | Docker down, image missing, run timed out (`FailureClass.ENVIRONMENT`) | **stop, surface the infra error.** Not a case error at all |
 | **Out of scope — schema ceiling** | a geometry/solver the IR can't express | **stop, report "unsupported"** (or hand to the overflow path, `docs/phase-ii-architecture.md` §2) |
 
-**A powerful detector falls out of the IR+renderer split:** a `DICTIONARY_SYNTAX`
-failure means a **renderer bug**, not an LLM error — because the renderer is
-supposed to make syntax errors impossible. (In the spike we had to *inject* a
-missing semicolon to see this class; in production it should never come from a
-correct renderer.) So `DICTIONARY_SYNTAX` routes to *humans/tests*, not to a
-retry. This is the opposite of Foam-Agent, where a syntax error is the LLM's to
-fix.
+**Note on `DICTIONARY_SYNTAX` routing.** The design ideal is that a `DICTIONARY_SYNTAX`
+failure signals a *renderer bug* (the renderer should guarantee syntax). In practice the
+renderer has coverage gaps — compressible wall functions, exotic field types — where the
+rendered file is structurally valid but uses a wrong OpenFOAM keyword. These errors are
+classified `DICTIONARY_SYNTAX` by the parser but are actually fixable by reading the file
+and correcting the specific keyword. The graph therefore routes `DICTIONARY_SYNTAX →
+patch_files` (LLM-assisted file-level fix) rather than stopping. `ENVIRONMENT` remains a
+hard stop since there is nothing the agent can do about infra failures.
 
 Misrouting matters twice over: it wastes the (few) retries a local model gets,
 and — once RL is added (`docs/rl-for-agent-skills.md`) — it **poisons the reward
@@ -95,8 +97,9 @@ real failures):
 | `MESH_GENERATION` | bad box dims (zero/negative extent), or an impossible geometry | revise `box_size` / `cells` |
 | `MESH_QUALITY` (checkMesh) | `cells`/grading too coarse or skewed | increase `cells`, add grading |
 | BC/patch error ("incompatible", "not defined on patch") | a patch role that doesn't fit the physics, or a missing patch | revise patch `role`s |
-| `DICTIONARY_SYNTAX` | **renderer bug** (see §2) | do NOT retry — log/test |
-| `ENVIRONMENT` | Docker/infra | do NOT retry — surface |
+| `DICTIONARY_SYNTAX` (renderer gap) | wrong keyword in a file the renderer partially covers (e.g. wrong wall function name) | `patch_files` node: read failing file, correct keyword |
+| `DICTIONARY_SYNTAX` (structural) | renderer emitted a structurally broken file | stop — log as renderer bug |
+| `ENVIRONMENT` | Docker/infra | stop — surface to operator |
 
 Building this table honestly needs a **corpus of real failures** — which is
 itself the RL trajectory data. So the loop and the RL dataset are the same

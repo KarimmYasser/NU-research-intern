@@ -10,8 +10,8 @@ import re
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
-    from .intent import CaseIntent, PatchIntent
-    from .mesh_io import MeshPatch
+    from ir.intent import CaseIntent, PatchIntent, PatchRole
+    from mesh.mesh_io import MeshPatch
 
 
 class BaseSkill:
@@ -40,7 +40,7 @@ class ExternalMeshPatchSkill(BaseSkill):
         if not known_patches:
             return intent
 
-        patch_roles: dict[str, str] = {}
+        patch_roles: dict[str, PatchRole] = {}
         for p in known_patches:
             name_lower = p.name.lower()
             if p.type == "cyclic" or "symmetry" in name_lower or "cyclic" in name_lower:

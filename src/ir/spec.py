@@ -149,5 +149,7 @@ class CaseSpec(BaseModel):
     turbulence: TurbulenceRAS = PydanticField(default_factory=TurbulenceRAS)
     fluid: FluidProperties = PydanticField(default_factory=FluidProperties)
     time: TimeControl = PydanticField(default_factory=TimeControl)
-    numerics: NumericsPreset = "incompressibleFluid_limitedLinear"
+    numerics: str = "incompressibleFluid_limitedLinear"
+    custom_fv_schemes: str | None = None
+    custom_fv_solution: str | None = None
     functions: list[str] = []  # raw controlDict function entries (e.g. "#includeFunc ...")

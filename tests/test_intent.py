@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agents.intent import CaseIntent, PatchIntent, intent_to_spec
+from ir import CaseIntent, PatchIntent, intent_to_spec
 
 
 def cavity_intent(regime: str = "turbulent") -> CaseIntent:
@@ -67,6 +67,19 @@ def test_laminar_has_no_turbulence():
     spec = intent_to_spec(cavity_intent(regime="laminar"))
     assert {f.name for f in spec.fields} == {"U", "p"}
     assert spec.turbulence.simulation_type == "laminar"
+
+
+def test_fluid_species_thermo():
+    intent = CaseIntent(
+        flow_type="compressible",
+        fluid_species="nitrogen",
+        box_size=(0.1, 0.1, 0.1),
+        patches=[PatchIntent(name="walls", role="wall")],
+    )
+    spec = intent_to_spec(intent)
+    assert spec.fluid.thermo is not None
+    assert spec.fluid.thermo.mol_weight == 28.013
+    assert spec.fluid.thermo.cp == 1040
 
 
 if __name__ == "__main__":

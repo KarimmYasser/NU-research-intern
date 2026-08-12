@@ -9,9 +9,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agents.intent import CaseIntent, PatchIntent, intent_to_spec
-from agents.mesh_io import load_external_mesh
-from agents.renderer import render
+from ir import CaseIntent, PatchIntent, intent_to_spec
+from mesh import load_external_mesh
+from rendering import render
 
 
 def vortex_tube_intent() -> CaseIntent:
@@ -68,7 +68,7 @@ def test_vortex_tube_intent_to_spec():
     assert walls.bc["k"].type == "kqRWallFunction"
     assert walls.bc["epsilon"].type == "epsilonWallFunction"
     assert walls.bc["nut"].type == "nutkWallFunction"
-    assert walls.bc["alphat"].type == "alphatJayatillekeWallFunction"
+    assert walls.bc["alphat"].type == "compressible::alphatJayatillekeWallFunction"
 
 
 def test_vortex_tube_rendering():
@@ -103,7 +103,10 @@ def test_vortex_tube_rendering():
 
 
 def test_grounded_mesh_patch_extraction(tmp_path):
+    import pytest
     mesh_dir = Path(__file__).resolve().parents[1] / "temp" / "case-files"
+    if not (mesh_dir / "boundary").is_file() and not (mesh_dir / "constant" / "polyMesh" / "boundary").is_file():
+        pytest.skip("local scratch mesh directory temp/case-files not present")
     known_patches = load_external_mesh(mesh_dir)
     names = {p.name for p in known_patches}
 

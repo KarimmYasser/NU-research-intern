@@ -26,8 +26,8 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from agents import graph  # noqa: E402
-from agents.llm_client import LLMConfig  # noqa: E402
+from llm import LLMConfig  # noqa: E402
+from orchestration import graph  # noqa: E402
 
 
 def _read_prompt(args: argparse.Namespace) -> str:
@@ -41,7 +41,7 @@ def _read_prompt(args: argparse.Namespace) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m agents",
+        prog="python -m src",
         description="Run the LangGraph OpenFOAM case-generation pipeline "
                     "against an externally-provided mesh (no mesh generation - R1).",
     )
@@ -72,14 +72,19 @@ def main(argv: list[str] | None = None) -> int:
             config=config,
             max_attempts=args.max_attempts,
         )
-        result = final_state["validation"]
-        print(f"\n{'=' * 60}\nvalidation stage: {result.stage}\nok: {result.ok}")
-        if not result.ok:
-            for err in result.errors:
-                print(f"  [{err.failure_class.name}] {err.file_hint or ''}: {err.message}")
-        print(f"attempts used: {final_state['attempt']}/{args.max_attempts}")
+        result = final_state.get("validation")
+        if result is not None:
+            print(f"\n{'=' * 60}\nvalidation stage: {result.stage}\nok: {result.ok}")
+            if not result.ok:
+                for err in result.errors:
+                    print(f"  [{err.failure_class.name}] {err.file_hint or ''}: {err.message}")
+            is_ok = result.ok
+        else:
+            is_ok = False
+        attempt = final_state.get("attempt", 0)
+        print(f"attempts used: {attempt}/{args.max_attempts}")
         print(f"case written to: {args.case_dir}")
-        return 0 if result.ok else 1
+        return 0 if is_ok else 1
 
     return 1
 

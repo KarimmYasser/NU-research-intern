@@ -13,9 +13,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import agents.graph as graph_mod
-from agents.intent import CaseIntent, PatchIntent
-from agents.validation_agent import ValidationResult
+import orchestration.graph as graph_mod
+from ir import CaseIntent, PatchIntent
+from validation import ValidationResult
 
 _BOUNDARY = """FoamFile
 {
@@ -87,6 +87,40 @@ def test_route_after_validate_retries_then_stops():
     assert graph_mod.route_after_validate(state) is graph_mod.END
 
 
+def test_route_after_validate_dictionary_syntax_goes_to_patch_files():
+    """DICTIONARY_SYNTAX → targeted file patch, not full intent re-extraction."""
+    from validation.validation_agent import FailureClass, ValidationError
+    err = ValidationError(FailureClass.DICTIONARY_SYNTAX, "system/fvSolution", "bad keyword")
+    result = ValidationResult(False, "foamRun", errors=[err])
+    state = {"validation": result, "attempt": 1, "max_attempts": 3}
+    assert graph_mod.route_after_validate(state) == "patch_files"
+
+
+def test_route_after_validate_environment_goes_to_end():
+    """ENVIRONMENT = infra failure; stop immediately, don't burn retries."""
+    from validation.validation_agent import FailureClass, ValidationError
+    err = ValidationError(FailureClass.ENVIRONMENT, None, "docker not found")
+    result = ValidationResult(False, "checkMesh", errors=[err])
+    state = {"validation": result, "attempt": 1, "max_attempts": 3}
+    assert graph_mod.route_after_validate(state) is graph_mod.END
+
+
+def test_build_intent_clears_stale_overrides(monkeypatch):
+    monkeypatch.setattr(graph_mod, "extract_intent", _fake_intent)
+    state = {
+        "nl": "dummy",
+        "attempt": 0,
+        "file_overrides": {"system/fvSolution": "stale patch"},
+        "known_patches": [
+            graph_mod.MeshPatch(name="inlet", type="patch", n_faces=10, start_face=0),
+            graph_mod.MeshPatch(name="outlet", type="patch", n_faces=10, start_face=10),
+            graph_mod.MeshPatch(name="walls", type="wall", n_faces=40, start_face=20),
+        ],
+    }
+    result = graph_mod.build_intent(state)
+    assert result["file_overrides"] is None, "build_intent must clear stale file_overrides"
+
+
 def test_full_run_writes_case_and_copies_polymesh(tmp_path, monkeypatch):
     mesh_dir = _make_mesh_dir(tmp_path)
     case_dir = tmp_path / "case"
@@ -122,6 +156,28 @@ def test_full_run_retries_on_failure_then_stops(tmp_path, monkeypatch):
 
     assert not final["validation"].ok
     assert final["attempt"] == 2  # stopped after max_attempts, did not loop forever
+
+
+def test_render_case_applies_file_overrides(tmp_path):
+    mesh_dir = _make_mesh_dir(tmp_path)
+    case_dir = tmp_path / "case"
+
+    intent = _fake_intent("dummy", known_patches=[
+        graph_mod.MeshPatch(name="inlet", type="patch", n_faces=10, start_face=0),
+        graph_mod.MeshPatch(name="outlet", type="patch", n_faces=10, start_face=10),
+        graph_mod.MeshPatch(name="walls", type="wall", n_faces=40, start_face=20),
+    ])
+    spec = graph_mod.intent_to_spec(intent)
+
+    state = {
+        "spec": spec,
+        "case_dir": str(case_dir),
+        "mesh_dir": str(mesh_dir),
+        "file_overrides": {"system/fvSolution": "// patched fvSolution\n"},
+    }
+
+    graph_mod.render_case(state)
+    assert (case_dir / "system" / "fvSolution").read_text() == "// patched fvSolution\n"
 
 
 if __name__ == "__main__":

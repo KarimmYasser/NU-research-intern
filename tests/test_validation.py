@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agents.validation_agent import FailureClass, ValidationAgent
+from validation import FailureClass, ValidationAgent
 
 va = ValidationAgent()
 
@@ -60,6 +60,27 @@ def test_environment_error_classified():
     errs = va.parse_errors("docker not found on PATH - install Docker Desktop",
                            FailureClass.MESH_GENERATION)
     assert errs[0].failure_class == FailureClass.ENVIRONMENT
+
+
+def test_check_mesh_caching(tmp_path):
+    poly = tmp_path / "constant" / "polyMesh"
+    poly.mkdir(parents=True)
+    boundary = poly / "boundary"
+    boundary.write_text("boundary_data")
+
+    agent = ValidationAgent()
+    agent.clear_mesh_cache()
+
+    key = agent._get_mesh_key(tmp_path)
+    assert key is not None
+
+    # Manually mark as checked
+    agent._CHECKED_MESHES.add(key)
+    res = agent.run_check_mesh(tmp_path)
+
+    assert res.ok
+    assert "cached pass" in res.log
+    agent.clear_mesh_cache()
 
 
 if __name__ == "__main__":

@@ -16,13 +16,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Alternatives considered and not chosen (docs/agent-framework-comparison.md).
 autogen = ["pyautogen>=0.2"]
 crewai = ["crewai>=0.30"]
 dev = ["pytest>=7.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
+
+[tool.pyright]
+extraPaths = ["src"]

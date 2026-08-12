@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from agents.mesh_io import load_external_mesh, parse_boundary_file
+from mesh import load_external_mesh, parse_boundary_file
 
 _SAMPLE_BOUNDARY = """/*--------------------------------*- C++ -*----------------------------------*\\
   =========                 |

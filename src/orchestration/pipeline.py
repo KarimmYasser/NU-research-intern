@@ -19,19 +19,20 @@ from pathlib import Path
 
 from pydantic import ValidationError as PydanticValidationError
 
-from .case import CaseFiles
-from .intent import CaseIntent, intent_to_spec
-from .llm_client import LLMConfig, make_client
-from .mesh_io import MeshPatch, copy_polymesh, load_external_mesh
-from .rag import KnowledgeRetriever
-from .renderer import render
-from .skills import SkillRegistry
-from .validation_agent import ValidationAgent, ValidationResult
+from ir.intent import CaseIntent, intent_to_spec
+from knowledge.rag import KnowledgeRetriever
+from knowledge.skills import SkillRegistry
+from llm.llm_client import LLMConfig, make_client
+from mesh.mesh_io import MeshPatch, copy_polymesh, load_external_mesh
+from rendering.case import CaseFiles
+from rendering.renderer import render
+from validation.validation_agent import ValidationAgent, ValidationResult
 
 _SCHEMA = """{
   "regime": "laminar" | "turbulent",
   "flow_type": "incompressible" | "compressible",  // optional, default "incompressible"
   "solver_mode": "transient" | "steadyState",       // optional, default "transient"
+  "fluid_species": string,                           // e.g. "air", "nitrogen", "co2", "oxygen", "helium", "water_vapour"
   "nu": number,                                      // kinematic viscosity, m^2/s (incompressible)
   "p_ambient": number,                               // ambient/reference pressure, Pa (compressible)
   "temperature": number,                             // reference temperature, K (compressible)
@@ -75,6 +76,8 @@ _RESPONSE_FORMAT = {
                 "regime": {"type": "string", "enum": ["laminar", "turbulent"]},
                 "flow_type": {"type": "string", "enum": ["incompressible", "compressible"]},
                 "solver_mode": {"type": "string", "enum": ["transient", "steadyState"]},
+                "fluid_species": {"type": "string",
+                                  "enum": ["air", "nitrogen", "co2", "oxygen", "helium", "water_vapour"]},
                 "nu": {"type": "number"},
                 "p_ambient": {"type": "number"},
                 "temperature": {"type": "number"},
@@ -101,6 +104,33 @@ _RESPONSE_FORMAT = {
         },
     },
 }
+
+# Schema for the patch_files node: the LLM emits a dict of file paths -> corrected content.
+_PATCH_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "file_patches",
+        "strict": False,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "file_overrides": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                },
+            },
+            "required": ["file_overrides"],
+        },
+    },
+}
+
+_PATCH_SYSTEM = (
+    "You are an OpenFOAM v13 expert. You will be given an error from a failed "
+    "OpenFOAM validation run and the current content of the offending file(s). "
+    "Output ONLY a JSON object with this schema: "
+    '{"file_overrides": {"<relative/path>": "<full corrected file content>"}}. '
+    "Write the complete, corrected file content verbatim — no prose, no markdown fences."
+)
 
 
 def _extract_json(text: str) -> str:
@@ -147,7 +177,9 @@ def _chat_create(client, config: LLMConfig, messages: list[dict]):
             return client.chat.completions.create(model=config.model, messages=messages, **kwargs)
         except Exception as e:  # noqa: BLE001 - deliberately broad; trying next combo
             last_exc = e
-    raise last_exc  # all combinations failed
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("All LLM client chat completion attempts failed")
 
 
 def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 3,
@@ -181,6 +213,31 @@ def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 
     raise ValueError(f"Could not extract a valid CaseIntent after {max_retries} tries: {last_err}")
 
 
+def extract_file_patches(prompt: str, config: LLMConfig | None = None,
+                         max_retries: int = 2) -> dict[str, str]:
+    """Ask the LLM to emit direct file-content patches for a failing OpenFOAM file.
+
+    Returns a dict mapping relative case paths (e.g. "system/fvSolution") to
+    corrected file content strings. Returns an empty dict on failure rather than
+    raising, so the graph can fall back to full intent re-extraction.
+    """
+    config = config or LLMConfig()
+    client = make_client(config)
+    messages = [{"role": "system", "content": _PATCH_SYSTEM},
+                {"role": "user", "content": prompt}]
+    for _ in range(max_retries):
+        try:
+            resp = _chat_create(client, config, messages)
+            raw = resp.choices[0].message.content or ""
+            data = json.loads(_extract_json(raw))
+            overrides = data.get("file_overrides", {})
+            if isinstance(overrides, dict) and overrides:
+                return {k: v for k, v in overrides.items() if isinstance(k, str) and isinstance(v, str)}
+        except Exception:  # noqa: BLE001
+            pass
+    return {}
+
+
 @dataclass
 class PipelineResult:
     intent: CaseIntent
@@ -190,7 +247,19 @@ class PipelineResult:
 
 def generate(nl: str, case_dir: Path, config: LLMConfig | None = None,
              validate: bool = True, mesh_dir: Path | None = None) -> PipelineResult:
-    """Full pipeline: NL -> intent -> spec -> rendered files (-> optional run)."""
+    """Full pipeline: NL -> intent -> spec -> rendered files (-> optional run).
+
+    .. deprecated::
+        Use the LangGraph graph (orchestration.graph.run) instead. This function
+        is kept for backwards compatibility but does not apply file_overrides or
+        route DICTIONARY_SYNTAX errors to the file-patching node.
+    """
+    import warnings
+    warnings.warn(
+        "generate() is deprecated; use orchestration.graph.run() for full agent capabilities.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     known_patches = load_external_mesh(mesh_dir) if mesh_dir else None
     intent = extract_intent(nl, config, known_patches=known_patches)
     spec = intent_to_spec(intent)
