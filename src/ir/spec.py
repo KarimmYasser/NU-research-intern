@@ -56,10 +56,18 @@ Geometry = Union[BoxGeometry, ExternalMesh]
 # --- boundary conditions --------------------------------------------------
 
 class FieldBC(BaseModel):
-    """A field boundary condition: a type and an optional rendered value token."""
+    """A field boundary condition: a type, an optional value token, and extra dictionary entries (p0, etc.)."""
 
-    type: str  # fixedValue, noSlip, zeroGradient, empty, cyclic, kqRWallFunction, ...
+    type: str  # fixedValue, noSlip, zeroGradient, empty, cyclic, totalPressure, ...
     value: str | None = None  # e.g. "uniform (1 0 0)"; None for type-only BCs
+    extra: dict[str, str] = PydanticField(default_factory=dict)
+
+    def __init__(self, type: str, value: str | None = None, **kwargs):
+        extra_dict = dict(kwargs.pop("extra", {}))
+        for k, v in list(kwargs.items()):
+            if v is not None:
+                extra_dict[k] = str(v)
+        super().__init__(type=type, value=value, extra=extra_dict)
 
 
 class Patch(BaseModel):
