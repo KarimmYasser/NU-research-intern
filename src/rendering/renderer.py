@@ -497,12 +497,12 @@ def render_field(field: Field, patches: list[Patch]) -> str:
         if bc is None:
             continue
         inner_lines = [f"        type            {bc.type};"]
-        if bc.value is not None:
-            inner_lines.append(f"        value           {bc.value};")
         if hasattr(bc, "extra") and bc.extra:
             for k, v in bc.extra.items():
                 if k not in ("type", "value"):
                     inner_lines.append(f"        {k:<15} {v};")
+        if bc.value is not None:
+            inner_lines.append(f"        value           {bc.value};")
         inner = "\n".join(inner_lines)
         bf_parts.append(f"    {p.name}\n    {{\n{inner}\n    }}")
     boundary = "\n\n".join(bf_parts)
