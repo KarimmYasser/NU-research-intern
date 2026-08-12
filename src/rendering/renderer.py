@@ -300,7 +300,7 @@ PIMPLE
 
 """
 
-# Compressible steady-state preset (vortex tube)
+# Compressible steady-state preset (standard OpenFOAM v13 general defaults)
 _FVSCHEMES_COMPRESSIBLE_STEADY = """
 ddtSchemes
 {

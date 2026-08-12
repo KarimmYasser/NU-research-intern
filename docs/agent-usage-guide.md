@@ -6,17 +6,42 @@ This guide explains how to run the multi-agent OpenFOAM case-generation pipeline
 
 ## 1. Quickstart CLI Usage
 
-Ensure your Python environment (e.g., Conda `sesc-agentic-cfd` or virtualenv) is active and `PYTHONPATH` includes `src/`.
+### Prerequisites & Installation
 
-### macOS / Linux (Bash / Zsh)
+Activate your Python environment and install all dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+### macOS / Linux (Single-line — Recommended for terminal pasting)
+
+```bash
+export PYTHONPATH="src" && python -m src run --mesh "temp/case-files" --case-dir "temp/out/my_case" --prompt-file "temp/case-files/requirements.txt"
+```
+
+
+> [!WARNING]
+> On macOS, `python3` often invokes Xcode System Python 3.9 (`/Applications/Xcode-beta.app/...`) rather than your active Conda environment! Always use **`python`** (not `python3`) when your `sesc-agentic-cfd` Conda environment is active, or use `conda run` below.
+
+### macOS / Linux (Conda environment explicit runner)
+
+```bash
+conda run -n sesc-agentic-cfd python -m src run --mesh "temp/case-files" --case-dir "temp/out/my_case" --prompt-file "temp/case-files/requirements.txt"
+```
+
+### macOS / Linux (Multi-line)
 
 ```bash
 export PYTHONPATH="src"
-python3 -m src run \
+python -m src run \
     --mesh "temp/case-files" \
     --case-dir "temp/out/my_case" \
     --prompt-file "temp/case-files/requirements.txt"
 ```
+
+> [!NOTE]
+> The pipeline executes the LLM extraction (`gpt-5-mini`), spec expansion, rendering, and Docker OpenFOAM validation. This process takes ~10–15 seconds and runs silently until completion output is printed.
 
 ### Windows (PowerShell)
 
@@ -31,7 +56,7 @@ python -m src run `
 ### Option A: Read Prompt from a Text File (Recommended)
 
 ```bash
-python3 -m src run \
+python -m src run \
     --mesh "temp/case-files" \
     --case-dir "temp/out/my_case" \
     --prompt-file "temp/case-files/requirements.txt"
@@ -40,7 +65,7 @@ python3 -m src run \
 ### Option B: Pass Prompt Directly as a String
 
 ```bash
-python3 -m src run \
+python -m src run \
     --mesh "temp/case-files" \
     --case-dir "temp/out/my_case" \
     --prompt "I'm setting up a steady-state, compressible, turbulent RAS OpenFOAM case for a 60° vortex tube sector..."
@@ -51,8 +76,9 @@ python3 -m src run \
 Omitting both `--prompt` and `--prompt-file` starts interactive mode:
 
 ```bash
-python3 -m src run --mesh "temp/case-files" --case-dir "temp/out/my_case"
+python -m src run --mesh "temp/case-files" --case-dir "temp/out/my_case"
 ```
+
 *(Paste your text description, then press `Ctrl+D` on macOS/Linux or `Ctrl+Z` followed by `Enter` on Windows).*
 
 ---

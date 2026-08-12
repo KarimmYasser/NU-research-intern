@@ -46,6 +46,11 @@ class PatchIntent(BaseModel):
     velocity: tuple[float, float, float] | None = None  # inlet / movingWall
     pressure: float | None = None  # outlet (gauge or absolute Pa depending on flow_type)
     temperature: float | None = None  # inlet / wall temperature [K]
+    # Agent-chosen per-field BC overrides. Applied on top of role defaults.
+    # Each key is a field name (e.g. "p", "U"); value is a dict of OpenFOAM BC
+    # entries e.g. {"type": "totalPressure", "p0": "uniform 400000"}.
+    # Must pass IntentValidator checks before reaching the renderer.
+    bc_overrides: dict[str, dict[str, str]] | None = None
 
 
 class CaseIntent(BaseModel):
@@ -60,6 +65,14 @@ class CaseIntent(BaseModel):
     box_size: tuple[float, float, float] | None = None  # required if geometry == box
     cells: tuple[int, int, int] = (20, 20, 1)
     patches: list[PatchIntent]
+    # --- Agent-decided parameters (optional; validated by IntentValidator) ---
+    # Turbulence model name. If None, defaults to kEpsilon.
+    turbulence_model: str | None = None
+    # Full fvSolution body (everything between the outer braces of the file body,
+    # excluding the FoamFile header). When set, overrides the static preset.
+    custom_fv_solution: str | None = None
+    # Full fvSchemes body. When set, overrides the static preset.
+    custom_fv_schemes: str | None = None
 
 
 # Box face assignment: fixed roles take canonical faces; wall patches share the
@@ -106,8 +119,9 @@ def _num(v: float) -> str:
 
 
 # per-role boundary conditions, given the turbulent field values k0, eps0
-def _bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compressible: bool,
-                 k0: float, eps0: float, default_temp: float, p_ambient: float):
+def _default_bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compressible: bool,
+                         k0: float, eps0: float, default_temp: float, p_ambient: float) -> dict[str, FieldBC]:
+    """Generate the standard role-based BCs. Agent bc_overrides are applied on top by _bc_for_role."""
     def vec(v):
         return f"uniform ({_num(v[0])} {_num(v[1])} {_num(v[2])})"
 
@@ -154,6 +168,19 @@ def _bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compressible:
             bc["k"] = FieldBC(type="kqRWallFunction", value=f"uniform {_num(k0)}")
             bc["epsilon"] = FieldBC(type="epsilonWallFunction", value=f"uniform {_num(eps0)}")
             bc["nut"] = FieldBC(type="nutkWallFunction", value="uniform 0")
+    return bc
+
+
+def _bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compressible: bool,
+                 k0: float, eps0: float, default_temp: float, p_ambient: float) -> dict[str, FieldBC]:
+    """Generate BCs for a patch: role defaults, then agent bc_overrides applied on top."""
+    bc = _default_bc_for_role(role, p, turbulent, compressible, k0, eps0, default_temp, p_ambient)
+    # Apply agent-decided overrides. Each override is a dict of OpenFOAM BC key-values
+    # e.g. {"type": "totalPressure", "p0": "uniform 400000"}.
+    # The IntentValidator has already confirmed these are valid before we reach here.
+    if p.bc_overrides:
+        for field_name, override_dict in p.bc_overrides.items():
+            bc[field_name] = FieldBC(**override_dict)
     return bc
 
 
@@ -240,9 +267,22 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
     else:
         numerics = "incompressibleFluid_limitedLinear"
 
-    tut_numerics = _RETRIEVER.get_tutorial_numerics(solver, "compressible" if compressible else "incompressible")
-    custom_schemes = tut_numerics.get("fvSchemes")
-    custom_solution = tut_numerics.get("fvSolution")
+    # Agent-chosen turbulence model overrides the default kEpsilon.
+    turb_model = intent.turbulence_model or "kEpsilon"
+
+    # Agent-chosen custom fvSchemes/fvSolution take priority over static presets and
+    # tutorial-RAG snippets. The IntentValidator has already checked their syntax.
+    if intent.custom_fv_schemes or intent.custom_fv_solution:
+        final_schemes = intent.custom_fv_schemes
+        final_solution = intent.custom_fv_solution
+    else:
+        tut_numerics = _RETRIEVER.get_tutorial_numerics(solver, "compressible" if compressible else "incompressible")
+        final_schemes = tut_numerics.get("fvSchemes") if numerics not in (
+            "incompressibleFluid_limitedLinear", "incompressibleFluid_upwind", "compressibleFluid_steadyState"
+        ) else None
+        final_solution = tut_numerics.get("fvSolution") if numerics not in (
+            "incompressibleFluid_limitedLinear", "incompressibleFluid_upwind", "compressibleFluid_steadyState"
+        ) else None
 
     return CaseSpec(
         solver=solver,
@@ -250,12 +290,12 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
         patches=patches,
         fields=fields,
         turbulence=TurbulenceRAS(simulation_type="RAS" if turbulent else "laminar",
-                                 model="kEpsilon", turbulence=turbulent),
+                                 model=turb_model, turbulence=turbulent),
         fluid=fluid,
         time=_time_control(intent),
         numerics=numerics,
-        custom_fv_schemes=custom_schemes if numerics not in ("incompressibleFluid_limitedLinear", "incompressibleFluid_upwind", "compressibleFluid_steadyState") else None,
-        custom_fv_solution=custom_solution if numerics not in ("incompressibleFluid_limitedLinear", "incompressibleFluid_upwind", "compressibleFluid_steadyState") else None,
+        custom_fv_schemes=final_schemes,
+        custom_fv_solution=final_solution,
     )
 
 

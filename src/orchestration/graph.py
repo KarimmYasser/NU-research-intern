@@ -101,7 +101,9 @@ def read_mesh(state: CaseGraphState) -> dict:
     parses the small `boundary` dictionary (mesh_io.parse_boundary_file).
     """
     mesh_dir = state.get("mesh_dir", "")
+    print(f"\n[1/5] Reading mesh boundary from {mesh_dir}...", flush=True)
     patches = load_external_mesh(Path(mesh_dir))
+    print(f"      -> Loaded {len(patches)} patches: {[p.name for p in patches]}", flush=True)
     return {"known_patches": patches}
 
 
@@ -109,36 +111,53 @@ def build_intent(state: CaseGraphState) -> dict:
     """LLM call: NL (+ real patch names, + prior failure & file content if retrying) -> CaseIntent.
     Clears stale file_overrides so a fresh full re-render happens on this attempt.
     """
+    attempt = state.get("attempt", 0) + 1
+    max_attempts = state.get("max_attempts", DEFAULT_MAX_ATTEMPTS)
     nl = state.get("nl", "")
     err_fb = state.get("error_feedback")
     if err_fb:
+        print(f"\n[Retry {attempt}/{max_attempts}] Querying LLM to refine CaseIntent based on validation failure...", flush=True)
         file_context = _collect_file_context(state)
         nl = (
             f"{nl}\n\nThe previous attempt failed validation with this error:\n{err_fb}"
             f"{file_context}\n\nRead the error and file content above and fix the case."
         )
+    else:
+        print(f"\n[2/5] Querying LLM to build CaseIntent (Attempt {attempt}/{max_attempts})...", flush=True)
     known = state.get("known_patches")
     intent = extract_intent(nl, state.get("config"), known_patches=known)
+    print(f"      -> Extracted intent (flow_type={intent.flow_type}, regime={intent.regime}, species={intent.fluid_species}, turb_model={intent.turbulence_model or 'kEpsilon'})", flush=True)
+    if intent.custom_fv_solution:
+        print("      -> Agent specified custom fvSolution relaxation/solvers", flush=True)
+    if intent.custom_fv_schemes:
+        print("      -> Agent specified custom fvSchemes discretization", flush=True)
+    bc_ov_patches = [p.name for p in intent.patches if p.bc_overrides]
+    if bc_ov_patches:
+        print(f"      -> Agent BC overrides on patches: {bc_ov_patches}", flush=True)
     # Clear stale overrides so render_case does a clean render on this attempt.
-    return {"intent": intent, "attempt": state.get("attempt", 0) + 1, "file_overrides": None}
+    return {"intent": intent, "attempt": attempt, "file_overrides": None}
 
 
 def expand_spec(state: CaseGraphState) -> dict:
     """Deterministic CaseIntent -> CaseSpec expansion (intent.intent_to_spec)."""
+    print(f"\n[3/5] Expanding CaseIntent into CaseSpec (RAG & thermophysical lookup)...", flush=True)
     intent = state.get("intent")
     if intent is None:
         raise ValueError("Missing intent in CaseGraphState")
-    return {"spec": intent_to_spec(intent)}
+    spec = intent_to_spec(intent)
+    print(f"      -> Expanded spec successfully.", flush=True)
+    return {"spec": spec}
 
 
 def render_case(state: CaseGraphState) -> dict:
     """Deterministic CaseSpec -> files (renderer.render), then write to disk,
     copy the untouched polyMesh files, and apply any direct agent file_overrides."""
+    case_dir_str = state.get("case_dir", "")
+    mesh_dir_str = state.get("mesh_dir", "")
+    print(f"\n[4/5] Rendering OpenFOAM dictionary files to {case_dir_str}...", flush=True)
     spec = state.get("spec")
     if spec is None:
         raise ValueError("Missing spec in CaseGraphState")
-    case_dir_str = state.get("case_dir", "")
-    mesh_dir_str = state.get("mesh_dir", "")
     case_dir = Path(case_dir_str)
     case = render(spec)
     case.write(case_dir)
@@ -146,8 +165,10 @@ def render_case(state: CaseGraphState) -> dict:
 
     file_overrides = state.get("file_overrides")
     if file_overrides:
+        print(f"      -> Applying {len(file_overrides)} file patch overrides...", flush=True)
         apply_file_overrides(case_dir, file_overrides)
 
+    print(f"      -> Rendered case files written successfully.", flush=True)
     return {"case_files": case}
 
 
@@ -159,6 +180,7 @@ def patch_files(state: CaseGraphState) -> dict:
     re-running the full intent extraction, the agent reads the exact file that
     OpenFOAM rejected and returns corrected content as file_overrides.
     """
+    print(f"\n[Self-Correction] Querying LLM for targeted dictionary patch...", flush=True)
     val_res = state.get("validation")
     err_fb = state.get("error_feedback", "")
     file_context = _collect_file_context(state)
@@ -170,6 +192,7 @@ def patch_files(state: CaseGraphState) -> dict:
     )
 
     overrides = extract_file_patches(prompt, state.get("config"))
+    print(f"      -> LLM returned patches for: {list(overrides.keys())}", flush=True)
     return {"file_overrides": overrides}
 
 
@@ -177,11 +200,17 @@ def validate_case(state: CaseGraphState) -> dict:
     """Run the validation ladder, skipping blockMesh since the mesh is
     externally provided (validation_agent.run_ladder(skip_mesh_generation=True))."""
     case_dir_str = state.get("case_dir", "")
+    print(f"\n[5/5] Running Docker OpenFOAM validation ladder on {case_dir_str}...", flush=True)
     result = ValidationAgent().run_ladder(Path(case_dir_str), skip_mesh_generation=True)
     feedback = None
     if not result.ok:
         feedback = f"[{result.stage}] " + "\n".join(e.message for e in result.errors)
+        err_classes = [e.failure_class.name for e in result.errors]
+        print(f"      -> Validation FAILED at stage [{result.stage}]: {err_classes}", flush=True)
+    else:
+        print(f"      -> Validation PASSED at stage [{result.stage}]!", flush=True)
     return {"validation": result, "error_feedback": feedback, "done": result.ok}
+
 
 
 # --- routing ------------------------------------------------------------

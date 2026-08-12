@@ -1,0 +1,75 @@
+{
+  "ras_models": [
+    {
+      "name": "kEpsilon",
+      "extra_fields": ["k", "epsilon"],
+      "wall_functions": {
+        "k": "kqRWallFunction",
+        "epsilon": "epsilonWallFunction",
+        "nut": "nutkWallFunction"
+      },
+      "description": "Standard two-equation k-epsilon model. General-purpose turbulence model for fully turbulent flows."
+    },
+    {
+      "name": "kOmegaSST",
+      "extra_fields": ["k", "omega"],
+      "wall_functions": {
+        "k": "kqRWallFunction",
+        "omega": "omegaWallFunction",
+        "nut": "nutkWallFunction"
+      },
+      "description": "Shear-Stress Transport k-omega model. Better near-wall behaviour and adverse pressure gradients than k-epsilon."
+    },
+    {
+      "name": "SpalartAllmaras",
+      "extra_fields": ["nuTilda"],
+      "wall_functions": {
+        "nuTilda": "zeroGradient",
+        "nut": "nutLowReWallFunction"
+      },
+      "description": "One-equation Spalart-Allmaras model. Efficient for external aerodynamics and attached boundary layers."
+    },
+    {
+      "name": "realizableKE",
+      "extra_fields": ["k", "epsilon"],
+      "wall_functions": {
+        "k": "kqRWallFunction",
+        "epsilon": "epsilonWallFunction",
+        "nut": "nutkWallFunction"
+      },
+      "description": "Realizable k-epsilon variant. Improved for flows with strong streamline curvature, swirl, and rotation."
+    },
+    {
+      "name": "RNGkEpsilon",
+      "extra_fields": ["k", "epsilon"],
+      "wall_functions": {
+        "k": "kqRWallFunction",
+        "epsilon": "epsilonWallFunction",
+        "nut": "nutkWallFunction"
+      },
+      "description": "RNG k-epsilon. Better for swirling flows and transitional behaviour than standard k-epsilon."
+    },
+    {
+      "name": "LamBremhorstKE",
+      "extra_fields": ["k", "epsilon"],
+      "wall_functions": {
+        "k": "fixedValue",
+        "epsilon": "fixedValue",
+        "nut": "calculated"
+      },
+      "description": "Low-Reynolds-number k-epsilon (Lam-Bremhorst). Resolves near-wall flow without wall functions."
+    }
+  ],
+  "les_models": [
+    {
+      "name": "Smagorinsky",
+      "extra_fields": [],
+      "description": "Classic Smagorinsky sub-grid scale model for LES."
+    },
+    {
+      "name": "dynamicKEqn",
+      "extra_fields": ["k"],
+      "description": "Dynamic one-equation LES SGS model."
+    }
+  ]
+}

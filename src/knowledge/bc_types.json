@@ -1,0 +1,193 @@
+{
+  "bc_types": [
+    {
+      "type": "fixedValue",
+      "applicable_fields": ["U", "p", "T", "k", "epsilon", "omega", "nuTilda", "nut", "alphat", "h", "e"],
+      "required_keys": ["value"],
+      "optional_keys": [],
+      "description": "Prescribed fixed value at the boundary."
+    },
+    {
+      "type": "zeroGradient",
+      "applicable_fields": ["U", "p", "T", "k", "epsilon", "omega", "nuTilda", "nut", "alphat", "h", "e"],
+      "required_keys": [],
+      "optional_keys": [],
+      "description": "Zero normal gradient — quantity extrapolated from interior."
+    },
+    {
+      "type": "noSlip",
+      "applicable_fields": ["U"],
+      "required_keys": [],
+      "optional_keys": [],
+      "description": "Wall no-slip condition for velocity (equivalent to fixedValue uniform (0 0 0))."
+    },
+    {
+      "type": "empty",
+      "applicable_fields": ["U", "p", "T", "k", "epsilon", "omega", "nuTilda", "nut", "alphat", "h", "e"],
+      "required_keys": [],
+      "optional_keys": [],
+      "description": "2-D / axisymmetric front-and-back patch (solved fields ignored on this face)."
+    },
+    {
+      "type": "cyclic",
+      "applicable_fields": ["U", "p", "T", "k", "epsilon", "omega", "nuTilda", "nut", "alphat", "h", "e"],
+      "required_keys": [],
+      "optional_keys": [],
+      "description": "Periodic coupling — values mapped 1-to-1 to the matching cyclic patch."
+    },
+    {
+      "type": "symmetryPlane",
+      "applicable_fields": ["U", "p", "T", "k", "epsilon", "omega", "nuTilda", "nut", "alphat", "h", "e"],
+      "required_keys": [],
+      "optional_keys": [],
+      "description": "Symmetry plane — normal component zero, tangential reflected."
+    },
+    {
+      "type": "symmetry",
+      "applicable_fields": ["U", "p", "T", "k", "epsilon", "omega", "nuTilda", "nut", "alphat", "h", "e"],
+      "required_keys": [],
+      "optional_keys": [],
+      "description": "Generic symmetry condition (v13 alias for symmetryPlane)."
+    },
+    {
+      "type": "calculated",
+      "applicable_fields": ["nut", "alphat", "nuTilda"],
+      "required_keys": ["value"],
+      "optional_keys": [],
+      "description": "Value derived from other fields (post-processing only, not solved)."
+    },
+    {
+      "type": "totalPressure",
+      "applicable_fields": ["p"],
+      "required_keys": ["p0"],
+      "optional_keys": ["value", "U", "phi", "rho", "psi", "gamma"],
+      "description": "Pressure BC based on stagnation (total) pressure. Used at compressible inlets. Requires p0 = stagnation pressure."
+    },
+    {
+      "type": "fixedFluxPressure",
+      "applicable_fields": ["p"],
+      "required_keys": [],
+      "optional_keys": ["value"],
+      "description": "Adjusts pressure gradient to be consistent with fixed-flux (e.g. wall) velocity BCs. Use on walls and no-slip surfaces."
+    },
+    {
+      "type": "pressureInletOutletVelocity",
+      "applicable_fields": ["U"],
+      "required_keys": ["value"],
+      "optional_keys": ["tangentialVelocity"],
+      "description": "Velocity derived from pressure flux at inlet; zeroGradient at outlet. Pair with totalPressure on p."
+    },
+    {
+      "type": "pressureInletVelocity",
+      "applicable_fields": ["U"],
+      "required_keys": ["value"],
+      "optional_keys": [],
+      "description": "Velocity derived from pressure gradient at a pure inlet. Direction calculated from patch normal."
+    },
+    {
+      "type": "inletOutlet",
+      "applicable_fields": ["U", "T", "k", "epsilon", "omega", "nuTilda", "alphat", "h", "e"],
+      "required_keys": ["inletValue"],
+      "optional_keys": ["value"],
+      "description": "zeroGradient during outflow; fixed inletValue during reverse flow. Prevents back-flow instability at outlets."
+    },
+    {
+      "type": "outletInlet",
+      "applicable_fields": ["p"],
+      "required_keys": ["outletValue"],
+      "optional_keys": ["value"],
+      "description": "Inverse of inletOutlet — fixed value at outlet, zeroGradient during inflow."
+    },
+    {
+      "type": "waveTransmissive",
+      "applicable_fields": ["p"],
+      "required_keys": ["field", "gamma", "lInf", "fieldInf"],
+      "optional_keys": ["value", "phi", "rho"],
+      "description": "Non-reflecting (characteristic) outlet BC for compressible flows. Prevents acoustic reflections."
+    },
+    {
+      "type": "flowRateInletVelocity",
+      "applicable_fields": ["U"],
+      "required_keys": [],
+      "optional_keys": ["massFlowRate", "volumetricFlowRate", "value", "rhoInlet"],
+      "description": "Velocity profile from specified mass or volumetric flow rate. Requires exactly one of massFlowRate or volumetricFlowRate."
+    },
+    {
+      "type": "flowRateOutletVelocity",
+      "applicable_fields": ["U"],
+      "required_keys": [],
+      "optional_keys": ["massFlowRate", "volumetricFlowRate", "value", "rhoOutlet"],
+      "description": "Adjusts velocity to achieve specified outlet mass or volumetric flow rate."
+    },
+    {
+      "type": "kqRWallFunction",
+      "applicable_fields": ["k"],
+      "required_keys": ["value"],
+      "optional_keys": [],
+      "description": "Wall function for turbulent kinetic energy k (high-Re wall treatment)."
+    },
+    {
+      "type": "epsilonWallFunction",
+      "applicable_fields": ["epsilon"],
+      "required_keys": ["value"],
+      "optional_keys": [],
+      "description": "Wall function for turbulent dissipation rate epsilon."
+    },
+    {
+      "type": "omegaWallFunction",
+      "applicable_fields": ["omega"],
+      "required_keys": ["value"],
+      "optional_keys": [],
+      "description": "Wall function for specific dissipation rate omega (kOmegaSST)."
+    },
+    {
+      "type": "nutkWallFunction",
+      "applicable_fields": ["nut"],
+      "required_keys": ["value"],
+      "optional_keys": [],
+      "description": "Wall function for turbulent kinematic viscosity nut."
+    },
+    {
+      "type": "nutLowReWallFunction",
+      "applicable_fields": ["nut"],
+      "required_keys": ["value"],
+      "optional_keys": [],
+      "description": "Low-Reynolds-number wall function for nut."
+    },
+    {
+      "type": "compressible::alphatJayatillekeWallFunction",
+      "applicable_fields": ["alphat"],
+      "required_keys": ["value"],
+      "optional_keys": ["Prt"],
+      "description": "Compressible thermal diffusivity wall function (Jayatilleke model)."
+    },
+    {
+      "type": "compressible::alphatWallFunction",
+      "applicable_fields": ["alphat"],
+      "required_keys": ["value"],
+      "optional_keys": ["Prt"],
+      "description": "Simple compressible turbulent thermal diffusivity wall function."
+    },
+    {
+      "type": "turbulentIntensityKineticEnergyInlet",
+      "applicable_fields": ["k"],
+      "required_keys": ["intensity", "value"],
+      "optional_keys: [],": [],
+      "description": "Computes k from turbulent intensity (fraction of mean velocity, e.g. 0.05 for 5%)."
+    },
+    {
+      "type": "turbulentMixingLengthDissipationRateInlet",
+      "applicable_fields": ["epsilon"],
+      "required_keys": ["mixingLength", "value"],
+      "optional_keys": [],
+      "description": "Computes epsilon from turbulent mixing length."
+    },
+    {
+      "type": "turbulentMixingLengthFrequencyInlet",
+      "applicable_fields": ["omega"],
+      "required_keys": ["mixingLength", "value"],
+      "optional_keys": [],
+      "description": "Computes omega from turbulent mixing length (for kOmegaSST)."
+    }
+  ]
+}

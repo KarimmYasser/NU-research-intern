@@ -39,28 +39,56 @@ _SCHEMA = """{
   "geometry": "box" | "external_mesh",
   "box_size": [Lx, Ly, Lz],                          // meters; required when geometry is "box"
   "cells": [Nx, Ny, Nz],                             // optional, default [20, 20, 1]
+  "turbulence_model": string,                        // "kEpsilon"|"kOmegaSST"|"SpalartAllmaras"|"realizableKE"|"RNGkEpsilon"; omit for default kEpsilon
+  "custom_fv_schemes": string,                       // full fvSchemes dict body (between outer braces); omit to use standard preset
+  "custom_fv_solution": string,                      // full fvSolution dict body including relaxationFactors; omit to use standard preset
   "patches": [
     { "name": string,
       "role": "inlet" | "outlet" | "wall" | "movingWall" | "empty" | "cyclic",
       "velocity": [x, y, z],                         // only for inlet / movingWall
       "pressure": number,                            // gauge or absolute Pa
-      "temperature": number }                        // inlet / wall temperature [K]
+      "temperature": number,                         // inlet / wall temperature [K]
+      "bc_overrides": {                              // optional: per-field BC type overrides
+        "<field>": {"type": "<bcType>", "<key>": "<value>", ...}
+      }
+    }
   ]
 }"""
 
 _EXAMPLE = """Example — "Lid-driven cavity: 0.1m square box, top wall slides at 1 m/s, other
-walls fixed, 2D, turbulent, air nu=1e-5" becomes:
+ walls fixed, 2D, turbulent, air nu=1e-5" becomes:
 {"regime":"turbulent","nu":1e-05,"geometry":"box","box_size":[0.1,0.1,0.1],
 "cells":[20,20,1],"patches":[
 {"name":"movingWall","role":"movingWall","velocity":[1,0,0]},
 {"name":"fixedWalls","role":"wall"},
 {"name":"frontAndBack","role":"empty"}]}"""
 
+_BC_GUIDANCE = """
+When to use bc_overrides (use role defaults otherwise):
+- Compressible inlet pressure: {"p": {"type": "totalPressure", "p0": "uniform <abs_Pa>"}}
+  pair with: {"U": {"type": "pressureInletOutletVelocity", "value": "uniform (0 0 0)"}}
+- Compressible outlet (back-flow safe): {"U": {"type": "inletOutlet", "inletValue": "uniform (0 0 0)", "value": "uniform (0 0 0)"}}
+- Wall p for compressible: {"p": {"type": "fixedFluxPressure", "value": "uniform 0"}}
+- Mass-flow inlet velocity: {"U": {"type": "flowRateInletVelocity", "massFlowRate": <kg/s>}}
+
+When to use custom_fv_solution (relaxationFactors):
+- High-speed or highly swirling compressible SIMPLE: p~0.05, rho~0.05, U~0.2, h~0.3, k~0.3, epsilon~0.3
+- Mildly coupled compressible SIMPLE: p~0.3, U~0.5, h~0.5
+- Incompressible channel/duct: p~0.3, U~0.7
+
+When to use turbulence_model:
+- Strong adverse pressure gradient or separation: kOmegaSST
+- External aerodynamics / thin boundary layer: SpalartAllmaras
+- Swirling / recirculating flows: realizableKE or RNGkEpsilon
+- Default general: kEpsilon
+"""
+
 _SYSTEM = (
     "You convert a fluid-simulation description into a compact JSON intent for "
     "OpenFOAM. Output ONLY the JSON object — no prose, no markdown fences. "
-    "Use exactly this schema:\n" + _SCHEMA + "\n\n" + _EXAMPLE
+    "Use exactly this schema:\n" + _SCHEMA + "\n\n" + _EXAMPLE + _BC_GUIDANCE
 )
+
 
 # LM-Studio-friendly JSON schema (uses `items`, enums; no tuples/$refs) for
 # grammar-constrained structured output. Guarantees well-formed brackets, which
@@ -84,6 +112,12 @@ _RESPONSE_FORMAT = {
                 "geometry": {"type": "string", "enum": ["box", "external_mesh"]},
                 "box_size": {"type": "array", "items": {"type": "number"}},
                 "cells": {"type": "array", "items": {"type": "integer"}},
+                "turbulence_model": {
+                    "type": "string",
+                    "enum": ["kEpsilon", "kOmegaSST", "SpalartAllmaras", "realizableKE", "RNGkEpsilon", "LamBremhorstKE"],
+                },
+                "custom_fv_schemes": {"type": "string"},
+                "custom_fv_solution": {"type": "string"},
                 "patches": {
                     "type": "array",
                     "items": {
@@ -95,6 +129,13 @@ _RESPONSE_FORMAT = {
                             "velocity": {"type": "array", "items": {"type": "number"}},
                             "pressure": {"type": "number"},
                             "temperature": {"type": "number"},
+                            "bc_overrides": {
+                                "type": "object",
+                                "additionalProperties": {
+                                    "type": "object",
+                                    "additionalProperties": {"type": "string"},
+                                },
+                            },
                         },
                         "required": ["name", "role"],
                     },
@@ -184,32 +225,68 @@ def _chat_create(client, config: LLMConfig, messages: list[dict]):
 
 def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 3,
                     known_patches: list[MeshPatch] | None = None) -> CaseIntent:
-    """NL -> validated CaseIntent with RAG context grounding and Skill enrichment."""
+    """NL -> validated CaseIntent with RAG context grounding and Skill enrichment.
+
+    Validation is two-stage (fast inner loop, no Docker):
+      1. Pydantic schema validation — types, enums, required fields.
+      2. IntentValidator semantic check — BC types, required BC keys, field
+         applicability, turbulence model name, relaxation factor ranges.
+    Both failure modes are fed back to the LLM in the same retry loop.
+    """
+    from knowledge.intent_validator import IntentValidator
     config = config or LLMConfig()
     client = make_client(config)
 
     retriever = KnowledgeRetriever()
     rag_context = retriever.format_prompt_context(nl)
+    validator = IntentValidator()
 
     user_content = nl + (_known_patches_hint(known_patches) if known_patches else "") + rag_context
     messages = [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": user_content}]
 
     skill_registry = SkillRegistry()
     last_err = ""
-    for _ in range(max_retries):
+    for attempt_idx in range(1, max_retries + 1):
         resp = _chat_create(client, config, messages)
         raw = resp.choices[0].message.content or ""
         try:
             intent = CaseIntent(**json.loads(_extract_json(raw)))
-            return skill_registry.apply_skills(intent, nl, known_patches)
+            print("      -> [Stage 1/2] Pydantic schema validation PASSED", flush=True)
         except (json.JSONDecodeError, PydanticValidationError, TypeError) as e:
             last_err = str(e)
+            print(f"      -> [Stage 1/2] Pydantic validation FAILED (attempt {attempt_idx}/{max_retries}): {last_err}", flush=True)
             messages += [
                 {"role": "assistant", "content": raw},
                 {"role": "user",
-                 "content": f"That was not valid. Error: {last_err}. "
+                 "content": f"That was not valid JSON/schema. Error: {last_err}. "
                             "Return only the corrected JSON object."},
             ]
+            continue
+
+        # Stage 2: deterministic semantic validation against knowledge registries.
+        print("      -> [Stage 2/2] Running IntentValidator against OpenFOAM registries...", flush=True)
+        semantic_errors = validator.validate(intent, known_patches=known_patches)
+        if semantic_errors:
+            err_lines = "\n".join(f"- {e}" for e in semantic_errors)
+            last_err = err_lines
+            print(f"      -> [Stage 2/2] IntentValidator FAILED with {len(semantic_errors)} error(s):", flush=True)
+            for err in semantic_errors:
+                print(f"         * {err}", flush=True)
+            messages += [
+                {"role": "assistant", "content": raw},
+                {"role": "user",
+                 "content": (
+                     f"Your intent has semantic errors that would cause OpenFOAM to fail:\n"
+                     f"{err_lines}\n"
+                     "Fix all listed errors and return only the corrected JSON object."
+                 )},
+            ]
+            continue
+
+        print("      -> [Stage 2/2] IntentValidator PASSED (0 semantic errors)", flush=True)
+        enriched_intent = skill_registry.apply_skills(intent, nl, known_patches)
+        return enriched_intent
+
     raise ValueError(f"Could not extract a valid CaseIntent after {max_retries} tries: {last_err}")
 
 

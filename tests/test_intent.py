@@ -82,6 +82,52 @@ def test_fluid_species_thermo():
     assert spec.fluid.thermo.cp == 1040
 
 
+def test_bc_overrides_applied_to_spec():
+    intent = CaseIntent(
+        flow_type="compressible",
+        geometry="box",
+        box_size=(0.1, 0.1, 0.1),
+        patches=[
+            PatchIntent(
+                name="inlet",
+                role="inlet",
+                bc_overrides={"p": {"type": "totalPressure", "value": "uniform 400000"}}
+            )
+        ]
+    )
+    spec = intent_to_spec(intent)
+    inlet_patch = next(p for p in spec.patches if p.name == "inlet")
+    assert inlet_patch.bc["p"].type == "totalPressure"
+    assert inlet_patch.bc["p"].value == "uniform 400000"
+
+
+def test_turbulence_model_override_propagates():
+    intent = CaseIntent(
+        regime="turbulent",
+        turbulence_model="kOmegaSST",
+        geometry="box",
+        box_size=(0.1, 0.1, 0.1),
+        patches=[PatchIntent(name="walls", role="wall")]
+    )
+    spec = intent_to_spec(intent)
+    assert spec.turbulence.model == "kOmegaSST"
+
+
+def test_custom_fv_solution_and_schemes_propagate():
+    custom_sol = "relaxationFactors { fields { p 0.05; } }"
+    custom_sch = "divSchemes { default none; div(phi,U) Gauss upwind; }"
+    intent = CaseIntent(
+        geometry="box",
+        box_size=(0.1, 0.1, 0.1),
+        custom_fv_solution=custom_sol,
+        custom_fv_schemes=custom_sch,
+        patches=[PatchIntent(name="walls", role="wall")]
+    )
+    spec = intent_to_spec(intent)
+    assert spec.custom_fv_solution == custom_sol
+    assert spec.custom_fv_schemes == custom_sch
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in sorted(globals().items()):
