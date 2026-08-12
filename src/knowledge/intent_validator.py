@@ -119,7 +119,10 @@ class IntentValidator:
                 self._check_foam_dict_syntax(intent.custom_fv_solution, "custom_fv_solution")
             )
 
-        # 5. Patch names referenced in bc_overrides must exist in mesh (if we know patches)
+        # 5. Box-geometry face assignment (canonical fallback must not strand a patch)
+        errors.extend(self._check_box_geometry(intent))
+
+        # 6. Patch names must exist in the mesh (when a mesh is provided)
         if known_patches:
             errors.extend(self._check_patch_names(intent, known_patches))
 
@@ -251,20 +254,45 @@ class IntentValidator:
             )]
         return []
 
+    def _check_box_geometry(self, intent: CaseIntent) -> list[IntentValidationError]:
+        """Box geometry: explicit faces must tile all six faces; the canonical
+        fallback must not strand a patch face-less (too many patches for a box).
+
+        For external meshes, faces are meaningless — reject them.
+        """
+        if getattr(intent, "geometry", "external_mesh") != "box":
+            offenders = [p.name for p in intent.patches if p.faces]
+            if offenders:
+                return [IntentValidationError(
+                    field="patches",
+                    message=(
+                        "`faces` is only valid for box geometry, but the case is "
+                        f"external_mesh and patch(es) {offenders} list faces."
+                    )
+                )]
+            return []
+        from ir.intent import _assign_faces  # deferred import avoids init-order coupling
+        try:
+            _assign_faces(intent.patches)
+        except ValueError as e:
+            return [IntentValidationError(field="geometry", message=str(e))]
+        return []
+
     def _check_patch_names(
         self, intent: CaseIntent, known_patches: list[MeshPatch]
     ) -> list[IntentValidationError]:
-        """Check that every patch with bc_overrides actually exists in the mesh."""
+        """When a mesh is provided, every intent patch must exist in it — the
+        boundary file is the single source of truth for patch names."""
         known_names = {p.name for p in known_patches}
         errors = []
         for i, patch in enumerate(intent.patches):
-            bc_overrides = getattr(patch, "bc_overrides", None)
-            if bc_overrides and patch.name not in known_names:
+            if patch.name not in known_names:
                 errors.append(IntentValidationError(
                     field=f"patches[{i}].name",
                     message=(
-                        f"Patch '{patch.name}' has bc_overrides but does not exist in the mesh. "
-                        f"Available patches: {sorted(known_names)}."
+                        f"Patch '{patch.name}' does not exist in the provided mesh. "
+                        f"Available patches: {sorted(known_names)}. "
+                        "Use the mesh's patch names verbatim."
                     )
                 ))
         return errors

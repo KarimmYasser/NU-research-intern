@@ -16,14 +16,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ir import (
     BoxGeometry,
+    CaseIntent,
     CaseSpec,
     ExternalMesh,
     Field,
     FieldBC,
     FluidProperties,
     Patch,
+    PatchIntent,
     TimeControl,
     TurbulenceRAS,
+    intent_to_spec,
 )
 from rendering import BANNER, FOOTER, render
 
@@ -194,6 +197,125 @@ def test_channel_fixes_assessment_errors():
     # wall functions rendered
     assert "kqRWallFunction" in c.zero["k"]
     assert "nutkWallFunction" in c.zero["nut"]
+
+
+# --- case-type constant/ layer -------------------------------------------------
+# The deterministic expander emits per-family physics; the renderer must write the
+# corresponding constant/ files (g, phaseProperties, per-phase physicalProperties,
+# dynamicMeshDict, solid/film property dicts), grounded in the v13 tutorials.
+
+
+def _box_intent(case_type: str, regime: str = "laminar") -> CaseIntent:
+    return CaseIntent(
+        case_type=case_type, regime=regime,
+        geometry="box", box_size=(1.0, 1.0, 0.1), cells=(10, 10, 1),
+        patches=[
+            PatchIntent(name="inlet", role="inlet", velocity=(1, 0, 0)),
+            PatchIntent(name="outlet", role="outlet"),
+            PatchIntent(name="tank", role="wall"),
+        ],
+    )
+
+
+def test_vof_constant_layer():
+    c = render(intent_to_spec(_box_intent("incompressibleVoF")))
+    # per-phase properties replace the base physicalProperties
+    assert "physicalProperties" not in c.constant
+    assert "physicalProperties.water" in c.constant
+    assert "physicalProperties.air" in c.constant
+    assert "rho             1000;" in c.constant["physicalProperties.water"]
+    assert "nu              1.48e-05;" in c.constant["physicalProperties.air"]
+    pp = c.constant["phaseProperties"]
+    assert "phases          (water air);" in pp
+    assert "sigma           0.07;" in pp
+    g = c.constant["g"]
+    assert "value           (0 -9.81 0);" in g
+    assert "class       uniformDimensionedVectorField;" in g
+
+
+def test_vof_nphase_pairwise_sigmas():
+    c = render(intent_to_spec(_box_intent("incompressibleMultiphaseVoF")))
+    pp = c.constant["phaseProperties"]
+    assert "phases          (water oil mercury air);" in pp
+    assert "sigmas" in pp
+    assert "(air mercury) 0.07" in pp
+    # every phase gets its own transport dict
+    for ph in ("water", "oil", "mercury", "air"):
+        assert f"physicalProperties.{ph}" in c.constant
+
+
+def test_driftflux_relative_velocity_model():
+    c = render(intent_to_spec(_box_intent("incompressibleDriftFlux")))
+    pp = c.constant["phaseProperties"]
+    assert "relativeVelocityModel simple;" in pp
+    assert "(simple|general)Coeffs" in pp
+    assert "physicalProperties.sludge" in c.constant
+
+
+def test_multiphase_euler_phaseproperties():
+    c = render(intent_to_spec(_box_intent("multiphaseEuler", regime="turbulent")))
+    pp = c.constant["phaseProperties"]
+    assert "referencePhase  water;" in pp
+    assert "type            purePhaseModel;" in pp
+    assert "surfaceTension" in pp
+    assert "blending" in pp
+    assert "phases          (air water);" in pp
+    for file in ("physicalProperties.air", "physicalProperties.water"):
+        assert file in c.constant
+
+
+def test_compressible_vof_sigma_dict_and_thermo():
+    c = render(intent_to_spec(_box_intent("compressibleVoF")))
+    pp = c.constant["phaseProperties"]
+    assert "type    liquidProperties;" in pp
+    assert "phase   water;" in pp
+    water = c.constant["physicalProperties.water"]
+    assert "properties      liquid;" in water
+    assert "H2O;" in water
+    air = c.constant["physicalProperties.air"]
+    assert "equationOfState perfectGas;" in air
+
+
+def test_solid_displacement_constant_layer():
+    intent = CaseIntent(
+        case_type="solidDisplacement",
+        geometry="box", box_size=(1.0, 1.0, 0.1),
+        patches=[PatchIntent(name="mech", role="wall")],
+    )
+    c = render(intent_to_spec(intent))
+    assert "momentumTransport" not in c.constant  # solids have no turbulence dict
+    phys = c.constant["physicalProperties"]
+    for key in ("rho", "nu", "E", "Cv", "kappa"):
+        assert f"{{{key}" in phys or f"\n{key}\n" in phys
+    assert "value       2e+11;" in phys
+
+
+def test_moving_mesh_renders_dynamicmeshdict():
+    c = render(intent_to_spec(_box_intent("movingMesh")))
+    dmd = c.constant["dynamicMeshDict"]
+    assert "motionSolver    displacementSBRStress;" in dmd
+    assert 'libs            ("libfvMotionSolvers.so");' in dmd
+
+
+def test_film_families_render_film_physical():
+    for ct in ("film", "isothermalFilm"):
+        c = render(intent_to_spec(_box_intent(ct)))
+        phys = c.constant["physicalProperties"]
+        assert "properties      liquid;" in phys
+        assert "deltaWet        1e-8;" in phys
+        assert "type    constant;" in phys
+        assert "sigma   0.07;" in phys
+        assert c.constant["g"]  # films are gravity-driven
+
+
+def test_all_case_types_render():
+    from ir.case_types import CASE_TYPES
+    for ct in CASE_TYPES:
+        c = render(intent_to_spec(_box_intent(ct)))
+        # every rendered file carries a valid header and footer
+        for content in [*c.system.values(), *c.constant.values(), *c.zero.values()]:
+            assert content.startswith(BANNER), ct
+            assert content.rstrip().endswith(FOOTER), ct
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import re
 from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
-    from ir.intent import CaseIntent, PatchIntent, PatchRole
+    from ir.intent import CaseIntent, PatchRole
     from mesh.mesh_io import MeshPatch
 
 
@@ -23,12 +23,17 @@ class BaseSkill:
     def is_applicable(self, prompt: str, intent: CaseIntent, known_patches: List[MeshPatch] | None = None) -> bool:
         return False
 
-    def enrich_intent(self, intent: CaseIntent, known_patches: List[MeshPatch] | None = None) -> CaseIntent:
+    def enrich_intent(self, intent: CaseIntent, prompt: str = "", known_patches: List[MeshPatch] | None = None) -> CaseIntent:
         return intent
 
 
 class ExternalMeshPatchSkill(BaseSkill):
-    """Skill to auto-map provided mesh patch names to physics roles when grounding."""
+    """Skill to auto-map provided mesh patch names to physics roles when grounding.
+
+    Data-driven: the mesh's own patch *type* is the authoritative signal (a
+    symmetryPlane patch is a symmetry boundary, a cyclic patch is periodic),
+    with the name as a fallback heuristic. No case-specific name assumptions.
+    """
 
     name = "external_mesh_patch_mapper"
     description = "Automatically maps boundary patch names from external polyMesh to physics roles."
@@ -36,20 +41,23 @@ class ExternalMeshPatchSkill(BaseSkill):
     def is_applicable(self, prompt: str, intent: CaseIntent, known_patches: List[MeshPatch] | None = None) -> bool:
         return bool(known_patches)
 
-    def enrich_intent(self, intent: CaseIntent, known_patches: List[MeshPatch] | None = None) -> CaseIntent:
+    def enrich_intent(self, intent: CaseIntent, prompt: str = "", known_patches: List[MeshPatch] | None = None) -> CaseIntent:
         if not known_patches:
             return intent
 
         patch_roles: dict[str, PatchRole] = {}
         for p in known_patches:
+            patch_type = p.type.lower()
             name_lower = p.name.lower()
-            if p.type == "cyclic" or "symmetry" in name_lower or "cyclic" in name_lower:
+            if "cyclic" in patch_type or "cyclic" in name_lower:
                 patch_roles[p.name] = "cyclic"
-            elif "inlet" in name_lower:
+            elif "symmetry" in patch_type or "symmetry" in name_lower:
+                patch_roles[p.name] = "symmetry"
+            elif "inlet" in patch_type or "inlet" in name_lower:
                 patch_roles[p.name] = "inlet"
-            elif "outlet" in name_lower:
+            elif "outlet" in patch_type or "outlet" in name_lower:
                 patch_roles[p.name] = "outlet"
-            elif p.type == "wall" or "wall" in name_lower:
+            elif "wall" in patch_type or "wall" in name_lower:
                 patch_roles[p.name] = "wall"
 
         for patch in intent.patches:
@@ -59,28 +67,42 @@ class ExternalMeshPatchSkill(BaseSkill):
         return intent
 
 
-class CompressibleSwirlingFlowSkill(BaseSkill):
-    """Skill for compressible, turbulent, swirling sector cases (e.g. Vortex Tube)."""
+# Units -> Pa. `(m)?(bar)` needs the mbar case before the bare `bar` branch.
+_PRESSURE_RE = re.compile(
+    r"(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*(mbar|MPa|kPa|bar|atm|psi|Pa)\b", re.IGNORECASE
+)
+_PRESSURE_TO_PA = {
+    "pa": 1.0,
+    "kpa": 1e3,
+    "mpa": 1e6,
+    "mbar": 100.0,
+    "bar": 1e5,
+    "atm": 101325.0,
+    "psi": 6894.76,
+}
 
-    name = "compressible_swirling_flow"
-    description = "Enforces compressible thermophysics, steady-state SIMPLE solver, and cyclic BCs for swirling sector flows."
+
+class PromptPressureSkill(BaseSkill):
+    """Grounded skill: read an explicit operating/ambient pressure out of the
+    prompt text (e.g. '4 bar', '5 atm') when the LLM left p_ambient at its
+    default. Purely data-driven from the prompt — no per-case constants."""
+
+    name = "prompt_ambient_pressure"
+    description = "Extracts an explicit operating/ambient pressure stated in the prompt (e.g. '4 bar', '5 atm') when the intent did not specify one."
 
     def is_applicable(self, prompt: str, intent: CaseIntent, known_patches: List[MeshPatch] | None = None) -> bool:
-        keywords = ["vortex", "swirl", "tangential", "sector", "compressible", "ranque", "hilsch"]
-        text = prompt.lower()
-        return any(kw in text for kw in keywords) or intent.flow_type == "compressible"
+        return (
+            intent.flow_type == "compressible"
+            and intent.p_ambient == 100000.0  # the LLM didn't pick a value
+            and _PRESSURE_RE.search(prompt) is not None
+        )
 
-    def enrich_intent(self, intent: CaseIntent, known_patches: List[MeshPatch] | None = None) -> CaseIntent:
-        intent.flow_type = "compressible"
-        intent.solver_mode = "steadyState"
-        if intent.p_ambient == 100000.0:
-            intent.p_ambient = 400000.0  # default to operating pressure for vortex tube if unsupplied
-
-        # Ensure rotational symmetry boundaries use cyclic role
-        for p in intent.patches:
-            if "symmetry" in p.name.lower() or "cyclic" in p.name.lower():
-                p.role = "cyclic"
-
+    def enrich_intent(self, intent: CaseIntent, prompt: str = "", known_patches: List[MeshPatch] | None = None) -> CaseIntent:
+        m = _PRESSURE_RE.search(prompt)
+        if m is None:
+            return intent
+        value = float(m.group(1)) * _PRESSURE_TO_PA[m.group(2).lower()]
+        intent.p_ambient = value
         return intent
 
 
@@ -90,7 +112,7 @@ class SkillRegistry:
     def __init__(self):
         self.skills: List[BaseSkill] = [
             ExternalMeshPatchSkill(),
-            CompressibleSwirlingFlowSkill(),
+            PromptPressureSkill(),
         ]
 
     def register(self, skill: BaseSkill) -> None:
@@ -100,5 +122,5 @@ class SkillRegistry:
         """Apply all matching skills to refine the extracted CaseIntent."""
         for skill in self.skills:
             if skill.is_applicable(prompt, intent, known_patches):
-                intent = skill.enrich_intent(intent, known_patches)
+                intent = skill.enrich_intent(intent, prompt=prompt, known_patches=known_patches)
         return intent

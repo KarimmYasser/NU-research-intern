@@ -3,17 +3,22 @@
 Usage (from the repo root, so the cwd-relative Python install can find
 site-packages - see /memories/repo/python-env.md):
 
-    C:/Python314/python.exe -m agents run \\
+    python -m src run \\
+        --case-dir temp/out/rhvt \\
+        --prompt "Describe the flow here..."
+
+    # with an externally-provided mesh (patches read from its boundary file):
+    python -m src run \\
         --mesh "temp/provided-mesh/3D RHVT (OpenFOAM Files)" \\
         --case-dir temp/out/rhvt \\
         --prompt "Describe the flow here..."
 
     # or read the prompt from a file:
-    C:/Python314/python.exe -m agents run --mesh ... --case-dir ... --prompt-file prompt.txt
+    python -m src run --case-dir ... --prompt-file prompt.txt
 
-Requires PYTHONPATH to include src/ (this file lives at src/agents/__main__.py,
-so `python -m agents ...` run from src/ works; from the repo root, add src/
-to the path first - see the sys.path shim below, matching tests/*.py).
+Without --mesh the case uses box geometry (the LLM picks box_size/cells/patches)
+and blockMesh generates the mesh during validation. Requires PYTHONPATH to
+include src/ (see the sys.path shim below, matching tests/*.py).
 """
 
 from __future__ import annotations
@@ -42,15 +47,17 @@ def _read_prompt(args: argparse.Namespace) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m src",
-        description="Run the LangGraph OpenFOAM case-generation pipeline "
-                    "against an externally-provided mesh (no mesh generation - R1).",
+        description="Run the LangGraph OpenFOAM case-generation pipeline. "
+                    "Without --mesh, a box-geometry case is rendered and meshed "
+                    "by blockMesh; with --mesh, the case wraps that mesh.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     run_p = sub.add_parser("run", help="Run the pipeline end-to-end.")
-    run_p.add_argument("--mesh", required=True,
-                        help="Path to the provided mesh (a polyMesh dir, or a "
-                             "folder containing `boundary` directly).")
+    run_p.add_argument("--mesh", default=None,
+                        help="Optional path to a provided mesh (a polyMesh dir, "
+                             "or a folder containing `boundary` directly). "
+                             "Omit for box geometry meshed by blockMesh.")
     run_p.add_argument("--case-dir", required=True,
                         help="Where to write the rendered OpenFOAM case.")
     run_p.add_argument("--prompt", help="The natural-language problem statement.")
@@ -67,8 +74,8 @@ def main(argv: list[str] | None = None) -> int:
         config = LLMConfig(model=args.model) if args.model else LLMConfig()
         final_state = graph.run(
             nl=nl,
-            mesh_dir=Path(args.mesh),
             case_dir=Path(args.case_dir),
+            mesh_dir=Path(args.mesh) if args.mesh else None,
             config=config,
             max_attempts=args.max_attempts,
         )

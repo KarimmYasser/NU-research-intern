@@ -141,9 +141,11 @@ class TimeControl(BaseModel):
 # Named numeric presets (fvSchemes + fvSolution templates). These reference field
 # names, not geometry, so they are stable across cases sharing a discretisation style.
 NumericsPreset = Literal[
-    "incompressibleFluid_limitedLinear",  # 2nd-order bounded (cavity)
-    "incompressibleFluid_upwind",  # 1st-order upwind, robust (channel)
-    "compressibleFluid_steadyState",  # steady-state SIMPLE (vortex tube)
+    "incompressibleFluid_limitedLinear",  # 2nd-order bounded, transient incompressible
+    "incompressibleFluid_upwind",  # 1st-order upwind, robust (steady/incompressible)
+    "compressibleFluid_steadyState",  # steady-state SIMPLE (compressible)
+    "incompressibleVoF",  # transient free-surface (interface compression, alpha solver)
+    "compressibleVoF",  # transient compressible free-surface (per-phase alpha thermodynamics)
 ]
 
 
@@ -151,6 +153,7 @@ class CaseSpec(BaseModel):
     """Complete structured description of one OpenFOAM v13 case."""
 
     solver: str = "incompressibleFluid"  # incompressibleFluid, fluid, ...
+    case_type: str = "incompressibleFluid"
     geometry: Geometry = PydanticField(discriminator="kind")
     patches: list[Patch]
     fields: list[Field]
@@ -161,3 +164,14 @@ class CaseSpec(BaseModel):
     custom_fv_schemes: str | None = None
     custom_fv_solution: str | None = None
     functions: list[str] = []  # raw controlDict function entries (e.g. "#includeFunc ...")
+
+    # --- case-type-specific extras (populated by intent_to_spec / renderer) ---
+    gravity: tuple[float, float, float] | None = None  # writes constant/g + enables p_rgh
+    phases: list[str] = []  # VoF/multiphase phase names -> alpha.<phase> fields + phaseProperties
+    surface_tension: float | None = None  # single-scalar sigma for 2-phase VoF
+    relative_velocity_model: str | None = None  # drift-flux phaseProperties
+    solid: bool = False  # solidDisplacement: renders a solid property dict, D field
+    is_film: bool = False  # film families: renders a film physicalProperties + delta field
+    species: list[str] = []  # multicomponent / combustion mass-fraction fields
+    per_phase_properties: bool = False  # constant/physicalProperties.<phase> per phase
+    compressible_phases: bool = False  # per-phase files carry thermo, not nu/rho

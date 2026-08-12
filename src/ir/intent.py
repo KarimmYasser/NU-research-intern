@@ -23,6 +23,7 @@ from knowledge.rag import KnowledgeRetriever
 # re-instantiating it on every intent_to_spec() call wastes I/O on every retry.
 _RETRIEVER = KnowledgeRetriever()
 
+from .case_types import CASE_TYPES, CaseTypeDef, get_case_type
 from .spec import (
     BoxFace,
     BoxGeometry,
@@ -37,7 +38,7 @@ from .spec import (
     TurbulenceRAS,
 )
 
-PatchRole = Literal["inlet", "outlet", "wall", "movingWall", "empty", "cyclic"]
+PatchRole = Literal["inlet", "outlet", "wall", "movingWall", "empty", "cyclic", "symmetry"]
 
 
 class PatchIntent(BaseModel):
@@ -46,6 +47,11 @@ class PatchIntent(BaseModel):
     velocity: tuple[float, float, float] | None = None  # inlet / movingWall
     pressure: float | None = None  # outlet (gauge or absolute Pa depending on flow_type)
     temperature: float | None = None  # inlet / wall temperature [K]
+    # Explicit box faces for this patch (box geometry only). When any patch lists
+    # faces, every box patch must list its faces and together they must cover all
+    # six faces exactly once. When none do, faces are assigned from a canonical
+    # role map (see _assign_faces) with the leftover faces folded into a wall.
+    faces: list[BoxFace] | None = None
     # Agent-chosen per-field BC overrides. Applied on top of role defaults.
     # Each key is a field name (e.g. "p", "U"); value is a dict of OpenFOAM BC
     # entries e.g. {"type": "totalPressure", "p0": "uniform 400000"}.
@@ -54,6 +60,10 @@ class PatchIntent(BaseModel):
 
 
 class CaseIntent(BaseModel):
+    # Case-type physics family (see ir.case_types.CASE_TYPES). Determines the
+    # solver module, the field set, and the property flavour (VoF, Euler,
+    # film, solid, ...). Defaults keep the original single-phase behaviour.
+    case_type: str = "incompressibleFluid"
     regime: Literal["laminar", "turbulent"] = "turbulent"
     flow_type: Literal["incompressible", "compressible"] = "incompressible"
     solver_mode: Literal["transient", "steadyState"] = "transient"
@@ -65,6 +75,14 @@ class CaseIntent(BaseModel):
     box_size: tuple[float, float, float] | None = None  # required if geometry == box
     cells: tuple[int, int, int] = (20, 20, 1)
     patches: list[PatchIntent]
+    # --- case-type-specific physics knobs (validated by IntentValidator) ---
+    # VoF / multiphase / buoyant: gravity vector, written to constant/g and
+    # switching the pressure field to p_rgh.
+    gravity: tuple[float, float, float] | None = None
+    # VoF phase names overriding the default pair for the chosen case_type.
+    phases: list[str] | None = None
+    # Surface tension [N/m] for the phaseProperties file (VoF families).
+    surface_tension: float | None = None
     # --- Agent-decided parameters (optional; validated by IntentValidator) ---
     # Turbulence model name. If None, defaults to kEpsilon.
     turbulence_model: str | None = None
@@ -75,12 +93,37 @@ class CaseIntent(BaseModel):
     custom_fv_schemes: str | None = None
 
 
-# Box face assignment: fixed roles take canonical faces; wall patches share the
-# remaining side faces. Reproduces the cavity's movingWall/fixedWalls layout.
+# Box face assignment. Canonical map: inlet->xMin, outlet->xMax,
+# movingWall->yMax, empty->zMin/zMax. Symmetry patches then walls split the
+# remaining side faces; any unclaimed face (including zMin/zMax when the case is
+# genuinely 3D) is folded into the last wall so the box is always closed. This
+# is a *general* layout rule, not a reproduction of one tutorial's geometry.
+_ALL_FACES: list[BoxFace] = ["xMin", "xMax", "yMin", "yMax", "zMin", "zMax"]
 _SIDE_FACES: list[BoxFace] = ["xMin", "xMax", "yMin", "yMax"]
 
 
 def _assign_faces(patches: list[PatchIntent]) -> dict[str, list[BoxFace]]:
+    # Explicit per-patch faces (LLM-chosen): require every patch to name its
+    # faces and verify they tile the box exactly once.
+    if any(p.faces for p in patches):
+        for p in patches:
+            if not p.faces:
+                raise ValueError(
+                    f"Patch '{p.name}' has no faces: when any box patch lists "
+                    "faces explicitly, every patch must list the faces it covers."
+                )
+        assigned = {p.name: list(p.faces) for p in patches}
+        seen: set[BoxFace] = set()
+        for name, fs in assigned.items():
+            for f in fs:
+                if f in seen:
+                    raise ValueError(f"Box face '{f}' is assigned to multiple patches.")
+                seen.add(f)
+        missing = [f for f in _ALL_FACES if f not in seen]
+        if missing:
+            raise ValueError(f"Box faces not covered by any patch: {missing}")
+        return assigned
+
     faces: dict[str, list[BoxFace]] = {}
     used: set[BoxFace] = set()
     for p in patches:
@@ -92,21 +135,65 @@ def _assign_faces(patches: list[PatchIntent]) -> dict[str, list[BoxFace]]:
             faces[p.name] = ["yMax"]; used.add("yMax")
         elif p.role == "empty":
             faces[p.name] = ["zMin", "zMax"]
+
     remaining: list[BoxFace] = [f for f in _SIDE_FACES if f not in used]
-    walls = [p for p in patches if p.role == "wall"]
-    for i, p in enumerate(walls):
-        faces[p.name] = [remaining[i]] if i < len(remaining) else []
-    if walls and len(remaining) > len(walls):  # extra faces go to the last wall
-        faces[walls[-1].name] += remaining[len(walls):]
+    for p in patches:
+        if p.role == "symmetry" and p.name not in faces:
+            faces[p.name] = [remaining.pop(0)] if remaining else []
+    for p in patches:
+        if p.role == "wall" and p.name not in faces:
+            faces[p.name] = [remaining.pop(0)] if remaining else []
+
+    # Close the box: any face still unclaimed (a 3D case has no empty z patches)
+    # goes to the last wall, or the first symmetry patch if there are no walls.
+    claimed = {f for fs in faces.values() for f in fs}
+    unclaimed = [f for f in _ALL_FACES if f not in claimed]
+    if unclaimed:
+        walls = [p for p in patches if p.role == "wall"]
+        if walls:
+            faces[walls[-1].name] = faces.get(walls[-1].name, []) + unclaimed
+        elif any(p.role == "symmetry" for p in patches):
+            sym = next(p for p in patches if p.role == "symmetry")
+            faces[sym.name] = faces.get(sym.name, []) + unclaimed
+        else:
+            raise ValueError(
+                "Box geometry left unassigned faces and there is no wall or "
+                "symmetry patch to absorb them; merge patches or list `faces` explicitly."
+            )
+
+    # Two same-role patches (e.g. two inlets) would collide on one canonical
+    # face — catch it instead of emitting a duplicate-face mesh.
+    seen: set[BoxFace] = set()
+    for name, fs in faces.items():
+        for f in fs:
+            if f in seen:
+                raise ValueError(
+                    f"Box face '{f}' is assigned to multiple patches ('{name}' "
+                    "collides with an earlier patch sharing its canonical face). "
+                    "Merge the patches or list `faces` explicitly."
+                )
+            seen.add(f)
+
+    for p in patches:
+        if not faces.get(p.name):
+            raise ValueError(
+                f"Patch '{p.name}' could not be assigned a box face — too many "
+                "patches for a 6-face box. Merge patches or list `faces` explicitly."
+            )
     return faces
+
+
+def _max_velocity(intent: CaseIntent) -> float:
+    """Largest prescribed velocity across patches (inlet/movingWall)."""
+    return max(
+        (math.sqrt(sum(c * c for c in p.velocity)) for p in intent.patches if p.velocity),
+        default=1.0,
+    ) or 1.0
 
 
 def _turbulence_values(intent: CaseIntent) -> tuple[float, float]:
     """Estimate inlet k and epsilon from velocity and a length scale."""
-    umag = max(
-        (math.sqrt(sum(c * c for c in p.velocity)) for p in intent.patches if p.velocity),
-        default=1.0,
-    ) or 1.0
+    umag = _max_velocity(intent)
     lref = min(intent.box_size) if intent.box_size else 0.1
     k = 1.5 * (0.05 * umag) ** 2
     length = 0.05 * lref
@@ -119,62 +206,132 @@ def _num(v: float) -> str:
 
 
 # per-role boundary conditions, given the turbulent field values k0, eps0
+# per-field boundary conditions by physics anchor ("p_rgh", "alpha", "delta",
+# "D", "T", ...). The anchor is the field-name prefix before the first "." so
+# phase-suffixed fields (alpha.water, U.air, k.water) share one rule.
+_PHASE_ANCHORS = ("U", "T", "alpha", "k", "epsilon", "nut", "alphat", "rho", "Theta", "nuTilda")
+
+
+def _anchor(field_name: str) -> str:
+    head = field_name.split(".", 1)[0]
+    return head if head in _PHASE_ANCHORS else field_name
+
+
 def _default_bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compressible: bool,
-                         k0: float, eps0: float, default_temp: float, p_ambient: float) -> dict[str, FieldBC]:
-    """Generate the standard role-based BCs. Agent bc_overrides are applied on top by _bc_for_role."""
+                         k0: float, eps0: float, default_temp: float, p_ambient: float,
+                         active_fields: list[str] | None = None) -> dict[str, FieldBC]:
+    """Generate the standard role-based BCs for every active field.
+
+    `active_fields` defaults to the base incompressible/compressible set; when a
+    case type adds fields (p_rgh, alpha.<phase>, delta, D, species) they are
+    seeded here with their role defaults. Agent bc_overrides are applied on top
+    by _bc_for_role.
+    """
     def vec(v):
         return f"uniform ({_num(v[0])} {_num(v[1])} {_num(v[2])})"
 
-    active_fields = ["U", "p"] + (["T", "alphat"] if compressible else []) + (["k", "epsilon", "nut"] if turbulent else [])
-    if role in ("empty", "cyclic"):
-        return {f: FieldBC(type=role, value="$internalField" if role == "cyclic" else None) for f in active_fields}
+    if active_fields is None:
+        active_fields = ["U", "p"] + (["T", "alphat"] if compressible else []) + (["k", "epsilon", "nut"] if turbulent else [])
 
+    passthrough = {"empty": role, "cyclic": role, "symmetry": "symmetryPlane" if role == "symmetry" else role}
+    if role in ("empty", "cyclic", "symmetry"):
+        bc_type = "symmetryPlane" if role == "symmetry" else role
+        value = "$internalField" if role == "cyclic" else None
+        return {f: FieldBC(type=bc_type, value=value) for f in active_fields}
+
+    is_inlet_like = role in ("inlet", "movingWall")
+    is_wall = role in ("wall", "movingWall")
     bc: dict[str, FieldBC] = {}
-    if role in ("inlet", "movingWall"):
-        bc["U"] = FieldBC(type="fixedValue", value=vec(p.velocity or (0, 0, 0)))
-        bc["p"] = FieldBC(type="zeroGradient")
-        if compressible:
-            t_val = p.temperature if p.temperature is not None else default_temp
-            bc["T"] = FieldBC(type="fixedValue", value=f"uniform {_num(t_val)}")
-            bc["alphat"] = FieldBC(type="calculated", value="uniform 0")
-    elif role == "outlet":
-        bc["U"] = FieldBC(type="zeroGradient")
-        p_val = p.pressure if p.pressure is not None else (p_ambient if compressible else 0.0)
-        bc["p"] = FieldBC(type="fixedValue", value=f"uniform {_num(p_val)}")
-        if compressible:
-            bc["T"] = FieldBC(type="zeroGradient")
-            bc["alphat"] = FieldBC(type="calculated", value="uniform 0")
-    else:  # wall
-        bc["U"] = FieldBC(type="noSlip")
-        bc["p"] = FieldBC(type="zeroGradient")
-        if compressible:
-            if p.temperature is not None:
-                bc["T"] = FieldBC(type="fixedValue", value=f"uniform {_num(p.temperature)}")
-            else:
-                bc["T"] = FieldBC(type="zeroGradient")
-            bc["alphat"] = FieldBC(type="compressible::alphatJayatillekeWallFunction", value="uniform 0")
 
-    if turbulent:
-        wall_like = role in ("wall", "movingWall")
-        if role == "inlet":
-            bc["k"] = FieldBC(type="fixedValue", value=f"uniform {_num(k0)}")
-            bc["epsilon"] = FieldBC(type="fixedValue", value=f"uniform {_num(eps0)}")
-            bc["nut"] = FieldBC(type="calculated", value="uniform 0")
-        elif role == "outlet":
-            bc["k"] = FieldBC(type="zeroGradient")
-            bc["epsilon"] = FieldBC(type="zeroGradient")
-            bc["nut"] = FieldBC(type="calculated", value="uniform 0")
-        elif wall_like:
-            bc["k"] = FieldBC(type="kqRWallFunction", value=f"uniform {_num(k0)}")
-            bc["epsilon"] = FieldBC(type="epsilonWallFunction", value=f"uniform {_num(eps0)}")
-            bc["nut"] = FieldBC(type="nutkWallFunction", value="uniform 0")
+    for f in active_fields:
+        a = _anchor(f)
+        if a == "U":
+            bc[f] = FieldBC(type="fixedValue", value=vec(p.velocity or (0, 0, 0))) if is_inlet_like \
+                else FieldBC(type="zeroGradient") if role == "outlet" \
+                else FieldBC(type="noSlip") if is_wall else None
+        elif a == "p":
+            if is_wall:
+                bc[f] = FieldBC(type="fixedFluxPressure", value="uniform 0") if compressible \
+                    else FieldBC(type="zeroGradient")
+            elif role == "outlet":
+                p_val = p.pressure if p.pressure is not None else (p_ambient if compressible else 0.0)
+                bc[f] = FieldBC(type="fixedValue", value=f"uniform {_num(p_val)}")
+            elif is_inlet_like:
+                bc[f] = FieldBC(type="zeroGradient")
+        elif a == "p_rgh":
+            # hydrostatic-consistent pressure: fixedFluxPressure at walls, fixed 0 elsewhere.
+            if is_wall:
+                bc[f] = FieldBC(type="fixedFluxPressure", value="uniform 0")
+            else:
+                bc[f] = FieldBC(type="fixedValue", value=f"uniform {_num(p.pressure or 0.0)}")
+        elif a == "T":
+            if is_inlet_like:
+                t_val = p.temperature if p.temperature is not None else default_temp
+                bc[f] = FieldBC(type="fixedValue", value=f"uniform {_num(t_val)}")
+            elif role == "outlet":
+                bc[f] = FieldBC(type="zeroGradient")
+            else:
+                if p.temperature is not None:
+                    bc[f] = FieldBC(type="fixedValue", value=f"uniform {_num(p.temperature)}")
+                else:
+                    bc[f] = FieldBC(type="zeroGradient")
+        elif a == "alphat":
+            # movingWall prescribes T directly, so alphat stays calculated there.
+            bc[f] = FieldBC(type="calculated", value="uniform 0") if (not is_wall or role == "movingWall") \
+                else FieldBC(type="compressible::alphatJayatillekeWallFunction", value="uniform 0")
+        elif a == "alpha":
+            # phase fraction: inletOutlet on inlets (fills inletValue), zeroGradient on boundaries.
+            if is_inlet_like:
+                bc[f] = FieldBC(type="inletOutlet", value="uniform 0", inletValue="uniform 1")
+            else:
+                bc[f] = FieldBC(type="zeroGradient")
+        elif a == "k" or a == "epsilon" or a == "nuTilda":
+            # movingWall is a moving wall: U is prescribed but turbulence uses
+            # wall functions, not inlet fixed values.
+            if role == "inlet":
+                v = f"uniform {_num(k0)}" if a == "k" else f"uniform {_num(eps0)}" if a == "epsilon" else "uniform 0"
+                bc[f] = FieldBC(type="fixedValue", value=v)
+            elif role == "outlet":
+                bc[f] = FieldBC(type="zeroGradient")
+            elif is_wall:
+                wf = "kqRWallFunction" if a == "k" else "epsilonWallFunction" if a == "epsilon" else "zeroGradient"
+                v = None if a == "nuTilda" else f"uniform {_num(k0 if a == 'k' else eps0)}"
+                bc[f] = FieldBC(type=wf, value=v)
+        elif a == "nut":
+            bc[f] = FieldBC(type="nutkWallFunction" if is_wall else "calculated", value="uniform 0")
+        elif a == "delta":
+            # film thickness: fixedValue on inlets, filmContactAngle at walls (zeroGradient fallback).
+            if is_inlet_like:
+                bc[f] = FieldBC(type="fixedValue", value="uniform 1e-3")
+            elif is_wall:
+                bc[f] = FieldBC(type="filmContactAngle", value="uniform 0")
+            else:
+                bc[f] = FieldBC(type="zeroGradient")
+        elif a == "D":
+            # solid displacement: prescribed fixedValue on inlet/movingWall patches, traction-free elsewhere.
+            if is_inlet_like:
+                bc[f] = FieldBC(type="fixedValue", value=vec(p.velocity or (0, 0, 0)))
+            else:
+                bc[f] = FieldBC(type="zeroGradient")
+        elif a in ("Xi", "b", "Tu") or len(f.split(".")[0]) > 1:
+            # combustion scalars (mass fractions, Xi, b, Tu): fixedValue at inlets.
+            if is_inlet_like:
+                t_val = p.temperature if p.temperature is not None else default_temp
+                bc[f] = FieldBC(type="fixedValue",
+                                value=f"uniform {_num(t_val if a == 'Tu' else 0.0)}")
+            else:
+                bc[f] = FieldBC(type="zeroGradient")
+        if bc.get(f) is None:
+            bc[f] = FieldBC(type="zeroGradient")
     return bc
 
 
 def _bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compressible: bool,
-                 k0: float, eps0: float, default_temp: float, p_ambient: float) -> dict[str, FieldBC]:
+                 k0: float, eps0: float, default_temp: float, p_ambient: float,
+                 active_fields: list[str] | None = None) -> dict[str, FieldBC]:
     """Generate BCs for a patch: role defaults, then agent bc_overrides applied on top."""
-    bc = _default_bc_for_role(role, p, turbulent, compressible, k0, eps0, default_temp, p_ambient)
+    bc = _default_bc_for_role(role, p, turbulent, compressible, k0, eps0, default_temp, p_ambient,
+                              active_fields=active_fields)
     # Apply agent-decided overrides. Each override is a dict of OpenFOAM BC key-values
     # e.g. {"type": "totalPressure", "p0": "uniform 400000"}.
     # The IntentValidator has already confirmed these are valid before we reach here.
@@ -184,54 +341,193 @@ def _bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compressible:
     return bc
 
 
+def _resolve_case_type(intent: CaseIntent) -> CaseTypeDef:
+    """Resolve the physics family, keeping backward compatibility: callers that
+    only set flow_type="compressible" (the pre-case-type API) map to the `fluid`
+    family automatically."""
+    name = intent.case_type
+    if not name or name == "incompressibleFluid":
+        if intent.flow_type == "compressible":
+            return CASE_TYPES["fluid"]
+        return CASE_TYPES["incompressibleFluid"]
+    return get_case_type(name)
+
+
+# Field factories per case type. Each returns (name, class, dims, internal_field).
+def _add_turb_fields(fields, turbulent, compressible, k0, eps0, suffix: str = ""):
+    if not turbulent:
+        return
+    s = f".{suffix}" if suffix else ""
+    fields += [
+        Field(name=f"k{s}", field_class="volScalarField",
+              dimensions=(0, 2, -2, 0, 0, 0, 0), internal_field=f"uniform {_num(k0)}"),
+        Field(name=f"epsilon{s}", field_class="volScalarField",
+              dimensions=(0, 2, -3, 0, 0, 0, 0), internal_field=f"uniform {_num(eps0)}"),
+        Field(name=f"nut{s}", field_class="volScalarField",
+              dimensions=(0, 2, -1, 0, 0, 0, 0), internal_field="uniform 0"),
+    ]
+    if compressible:
+        fields.append(Field(name=f"alphat{s}", field_class="volScalarField",
+                            dimensions=(1, -1, -1, 0, 0, 0, 0), internal_field="uniform 0"))
+
+
+def _case_fields(def_: CaseTypeDef, intent: CaseIntent, turbulent: bool,
+                 k0: float, eps0: float) -> list[Field]:
+    """The exact 0/ field list a case_type needs, grounded in the v13 tutorials.
+
+    Grounding (temp/openfoam-repo/OpenFOAM-13/tutorials):
+      incompressibleVoF/damBreak*, incompressibleMultiphaseVoF/damBreak4phase,
+      incompressibleDriftFlux/dahl         -> alpha + U + p_rgh (+ turbulence)
+      compressibleVoF/*damBreak*, compressibleMultiphaseVoF/damBreak4phase
+                                          -> alpha + U + p + p_rgh + T (+ turbulence)
+      multiphaseEuler/bubbleColumn*        -> alpha.<ph> + U.<ph> + T.<ph> + p + p_rgh
+      incompressibleDenseParticleFluid/column -> U.<carrier> + p
+      isothermalFluid/potentialFreeSurfaceOscillatingBox -> U + p + p_rgh + T
+      shockFluid/wedge15Ma5                -> U + p + T (inviscid, no turbulence)
+      fluid_buoyant/hotRoomComfort         -> U + p + p_rgh + T (+ turbulence)
+      solidDisplacement/plateHole          -> D + T
+      multicomponentFluid/counterFlowFlame -> species + U + p + T (+ turbulence)
+      XiFluid/moriyoshiHomogeneous         -> U + p + T + Tu + b + Xi + species (+ turbulence)
+    """
+    name = def_.name
+    compressible = def_.flow_type == "compressible"
+    dims_p = (1, -1, -2, 0, 0, 0, 0) if compressible else (0, 2, -2, 0, 0, 0, 0)
+    p_int = f"uniform {_num(intent.p_ambient)}" if compressible else "uniform 0"
+    phases = list(intent.phases or def_.phases)
+    fields: list[Field] = []
+
+    if def_.is_solid:
+        fields.append(Field(name="D", field_class="volVectorField",
+                            dimensions=(0, 1, 0, 0, 0, 0, 0), internal_field="uniform (0 0 0)"))
+        fields.append(Field(name="T", field_class="volScalarField",
+                            dimensions=(0, 0, 0, 1, 0, 0, 0),
+                            internal_field=f"uniform {_num(intent.temperature)}"))
+        return fields
+
+    if def_.is_film:
+        fields.append(Field(name="delta", field_class="volScalarField",
+                            dimensions=(0, 1, 0, 0, 0, 0, 0), internal_field="uniform 0"))
+        fields.append(Field(name="U", field_class="volVectorField",
+                            dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field="uniform (0 0 0)"))
+        fields.append(Field(name="p", field_class="volScalarField",
+                            dimensions=dims_p, internal_field=p_int))
+        # rivuletPanel 0/ carries T for both film families.
+        fields.append(Field(name="T", field_class="volScalarField",
+                            dimensions=(0, 0, 0, 1, 0, 0, 0),
+                            internal_field=f"uniform {_num(intent.temperature)}"))
+        return fields
+
+    # --- Euler-Euler: per-phase alpha/U/T + p + p_rgh -----------------------
+    if name == "multiphaseEuler":
+        for ph in phases:
+            fields.append(Field(name=f"alpha.{ph}", field_class="volScalarField",
+                                dimensions=(0, 0, 0, 0, 0, 0, 0), internal_field="uniform 0"))
+            fields.append(Field(name=f"U.{ph}", field_class="volVectorField",
+                                dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field="uniform (0 0 0)"))
+            if compressible:
+                fields.append(Field(name=f"T.{ph}", field_class="volScalarField",
+                                    dimensions=(0, 0, 0, 1, 0, 0, 0),
+                                    internal_field=f"uniform {_num(intent.temperature)}"))
+            _add_turb_fields(fields, turbulent, compressible, k0, eps0, suffix=ph)
+        fields.append(Field(name="p", field_class="volScalarField",
+                            dimensions=dims_p, internal_field=p_int))
+        fields.append(Field(name="p_rgh", field_class="volScalarField",
+                            dimensions=(1, -1, -2, 0, 0, 0, 0), internal_field="uniform 0"))
+        return fields
+
+    # --- two-fluid dense particle flow: U.<carrier> + p --------------------
+    if name == "incompressibleDenseParticleFluid":
+        carrier = phases[-1] if phases else "carrier"
+        fields.append(Field(name=f"U.{carrier}", field_class="volVectorField",
+                            dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field="uniform (0 0 0)"))
+        fields.append(Field(name="p", field_class="volScalarField",
+                            dimensions=dims_p, internal_field=p_int))
+        if turbulent:
+            _add_turb_fields(fields, turbulent, compressible, k0, eps0, suffix=carrier)
+        return fields
+
+    # --- VoF + drift-flux phase-fraction fields ----------------------------
+    if def_.phases:
+        emit = phases if len(phases) > 2 else [phases[0]]
+        for ph in emit:
+            fields.append(Field(name=f"alpha.{ph}", field_class="volScalarField",
+                                dimensions=(0, 0, 0, 0, 0, 0, 0), internal_field="uniform 0"))
+
+    # Velocity + pressure. Incompressible hydrostatic families solve only p_rgh;
+    # compressible gravity families solve both p and p_rgh; the rest solve p alone.
+    fields.append(Field(name="U", field_class="volVectorField",
+                        dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field="uniform (0 0 0)"))
+    if def_.needs_gravity and not compressible:
+        fields.append(Field(name="p_rgh", field_class="volScalarField",
+                            dimensions=(1, -1, -2, 0, 0, 0, 0), internal_field="uniform 0"))
+    else:
+        fields.append(Field(name="p", field_class="volScalarField",
+                            dimensions=dims_p, internal_field=p_int))
+        if def_.needs_gravity and name in ("fluid_buoyant", "compressibleVoF",
+                                           "compressibleMultiphaseVoF", "isothermalFluid"):
+            fields.append(Field(name="p_rgh", field_class="volScalarField",
+                                dimensions=(1, -1, -2, 0, 0, 0, 0), internal_field="uniform 0"))
+
+    # Temperature for every compressible family except multiphaseEuler (per-phase
+    # T handled above). isothermalFluid also solves T (potentialFreeSurfaceOscillatingBox).
+    if compressible and name != "multiphaseEuler":
+        fields.append(Field(name="T", field_class="volScalarField",
+                            dimensions=(0, 0, 0, 1, 0, 0, 0),
+                            internal_field=f"uniform {_num(intent.temperature)}"))
+
+    if name == "XiFluid":
+        fields.append(Field(name="b", field_class="volScalarField",
+                            dimensions=(0, 0, 0, 0, 0, 0, 0), internal_field="uniform 0"))
+        fields.append(Field(name="Xi", field_class="volScalarField",
+                            dimensions=(0, 0, 0, 0, 0, 0, 0), internal_field="uniform 1"))
+        fields.append(Field(name="Tu", field_class="volScalarField",
+                            dimensions=(0, 0, 0, 1, 0, 0, 0),
+                            internal_field=f"uniform {_num(intent.temperature)}"))
+
+    if def_.species:
+        for sp in def_.species:
+            fields.append(Field(name=sp, field_class="volScalarField",
+                                dimensions=(0, 0, 0, 0, 0, 0, 0),
+                                internal_field=f"uniform {_num(1.0 / len(def_.species))}"))
+
+    # Turbulence for everything except inviscid shockFluid and potential isothermalFluid.
+    if name not in ("shockFluid", "isothermalFluid"):
+        _add_turb_fields(fields, turbulent, compressible, k0, eps0)
+    return fields
+
+
+def _active_field_names(fields: list[Field]) -> list[str]:
+    return [f.name for f in fields]
+
+
 def intent_to_spec(intent: CaseIntent) -> CaseSpec:
     """Deterministically expand a compact CaseIntent into a full v13 CaseSpec."""
-    turbulent = intent.regime == "turbulent"
-    compressible = intent.flow_type == "compressible"
+    def_ = _resolve_case_type(intent)
+    name = def_.name
+    # Solids and films do not solve turbulence; force laminar regardless of regime.
+    forced_laminar = def_.is_solid or def_.is_film
+    turbulent = (intent.regime == "turbulent") and not forced_laminar
     steady = intent.solver_mode == "steadyState"
+    compressible = def_.flow_type == "compressible"
     k0, eps0 = _turbulence_values(intent) if turbulent else (0.0, 0.0)
 
     faces = _assign_faces(intent.patches) if intent.geometry == "box" else {}
+    fields = _case_fields(def_, intent, turbulent, k0, eps0)
+    active = _active_field_names(fields)
     patches = [
         Patch(
             name=p.name,
-            type="empty" if p.role == "empty" else ("cyclic" if p.role == "cyclic" else ("wall" if p.role in ("wall", "movingWall") else "patch")),
+            type=("empty" if p.role == "empty"
+                  else "cyclic" if p.role == "cyclic"
+                  else "symmetryPlane" if p.role == "symmetry"
+                  else "wall" if p.role in ("wall", "movingWall")
+                  else "patch"),
             faces=faces.get(p.name, []),
-            bc=_bc_for_role(p.role, p, turbulent, compressible, k0, eps0, intent.temperature, intent.p_ambient),
+            bc=_bc_for_role(p.role, p, turbulent, compressible, k0, eps0,
+                            intent.temperature, intent.p_ambient, active_fields=active),
         )
         for p in intent.patches
     ]
-
-    p_dim = (1, -1, -2, 0, 0, 0, 0) if compressible else (0, 2, -2, 0, 0, 0, 0)
-    p_int = f"uniform {_num(intent.p_ambient)}" if compressible else "uniform 0"
-
-    fields = [
-        Field(name="U", field_class="volVectorField",
-              dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field="uniform (0 0 0)"),
-        Field(name="p", field_class="volScalarField",
-              dimensions=p_dim, internal_field=p_int),
-    ]
-
-    if compressible:
-        fields.append(
-            Field(name="T", field_class="volScalarField",
-                  dimensions=(0, 0, 0, 1, 0, 0, 0), internal_field=f"uniform {_num(intent.temperature)}")
-        )
-
-    if turbulent:
-        fields += [
-            Field(name="k", field_class="volScalarField",
-                  dimensions=(0, 2, -2, 0, 0, 0, 0), internal_field=f"uniform {_num(k0)}"),
-            Field(name="epsilon", field_class="volScalarField",
-                  dimensions=(0, 2, -3, 0, 0, 0, 0), internal_field=f"uniform {_num(eps0)}"),
-            Field(name="nut", field_class="volScalarField",
-                  dimensions=(0, 2, -1, 0, 0, 0, 0), internal_field="uniform 0"),
-        ]
-        if compressible:
-            fields.append(
-                Field(name="alphat", field_class="volScalarField",
-                      dimensions=(1, -1, -1, 0, 0, 0, 0), internal_field="uniform 0")
-            )
 
     if intent.geometry == "box":
         if intent.box_size is None:
@@ -242,7 +538,8 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
     else:
         geometry = ExternalMesh()
 
-    solver = "fluid" if compressible else "incompressibleFluid"
+    # Property dictionary. Solid / incompressible families keep a constant nu;
+    # all compressible gas families carry thermo (per-species when named).
     if compressible:
         thermo_item = _RETRIEVER.get_species_thermo(intent.fluid_species)
         if thermo_item and "mixture" in thermo_item:
@@ -260,55 +557,84 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
     else:
         fluid = FluidProperties(flow_type="incompressible", nu=f"{intent.nu:g} [m^2/s]")
 
-    if steady and compressible:
+    # Numerics preset. The base single-phase families keep the legacy selection;
+    # the rest use the case-type's grounded preset (all keys exist in renderer.py).
+    if name == "incompressibleFluid":
+        numerics = "incompressibleFluid_upwind" if steady else "incompressibleFluid_limitedLinear"
+    elif name == "fluid":
         numerics = "compressibleFluid_steadyState"
-    elif steady:
-        numerics = "incompressibleFluid_upwind"
     else:
-        numerics = "incompressibleFluid_limitedLinear"
+        numerics = def_.default_numerics
 
-    # Agent-chosen turbulence model overrides the default kEpsilon.
-    turb_model = intent.turbulence_model or "kEpsilon"
+    # Agent-chosen custom fvSchemes/fvSolution override the static preset. The
+    # preset keys above are all defined in renderer.py, so no RAG fallback needed.
+    final_schemes = intent.custom_fv_schemes
+    final_solution = intent.custom_fv_solution
 
-    # Agent-chosen custom fvSchemes/fvSolution take priority over static presets and
-    # tutorial-RAG snippets. The IntentValidator has already checked their syntax.
-    if intent.custom_fv_schemes or intent.custom_fv_solution:
-        final_schemes = intent.custom_fv_schemes
-        final_solution = intent.custom_fv_solution
-    else:
-        tut_numerics = _RETRIEVER.get_tutorial_numerics(solver, "compressible" if compressible else "incompressible")
-        final_schemes = tut_numerics.get("fvSchemes") if numerics not in (
-            "incompressibleFluid_limitedLinear", "incompressibleFluid_upwind", "compressibleFluid_steadyState"
-        ) else None
-        final_solution = tut_numerics.get("fvSolution") if numerics not in (
-            "incompressibleFluid_limitedLinear", "incompressibleFluid_upwind", "compressibleFluid_steadyState"
-        ) else None
-
+    is_film = def_.is_film
     return CaseSpec(
-        solver=solver,
+        solver=def_.solver,
+        case_type=def_.name,
         geometry=geometry,
         patches=patches,
         fields=fields,
         turbulence=TurbulenceRAS(simulation_type="RAS" if turbulent else "laminar",
-                                 model=turb_model, turbulence=turbulent),
+                                 model=intent.turbulence_model or "kEpsilon",
+                                 turbulence=turbulent),
         fluid=fluid,
         time=_time_control(intent),
         numerics=numerics,
         custom_fv_schemes=final_schemes,
         custom_fv_solution=final_solution,
+        gravity=intent.gravity if intent.gravity is not None
+                else ((0, -9.81, 0) if def_.needs_gravity else None),
+        phases=list(intent.phases or def_.phases),
+        surface_tension=(intent.surface_tension if intent.surface_tension is not None
+                         else def_.surface_tension),
+        relative_velocity_model=def_.relative_velocity_model,
+        solid=def_.is_solid,
+        is_film=is_film,
+        species=list(def_.species),
+        per_phase_properties=def_.per_phase_properties,
+        compressible_phases=def_.compressible_phases,
     )
 
 
+def _cfl_delta_t(intent: CaseIntent) -> float:
+    """A conservative first deltaT from a Courant estimate (cell size / velocity).
+
+    General, scale-aware default: no case-specific constants. Clamped to
+    [1e-6, 0.1] so absurd inputs can't produce a runaway timestep.
+    """
+    if intent.box_size is None:
+        return 1e-4
+    dx = min(
+        b / n for b, n in zip(intent.box_size, intent.cells) if n > 0
+    )
+    dt = 0.5 * dx / _max_velocity(intent)
+    return max(1e-6, min(0.1, dt))
+
+
 def _time_control(intent: CaseIntent) -> TimeControl:
-    """Pick a starting deltaT + adaptive-timestep policy."""
+    """Pick a starting deltaT + adaptive-timestep policy.
+
+    All transient cases get adaptive stepping (adjustTimeStep + maxCo) so the
+    solver self-tunes the timestep to whatever mesh/velocity scale it finds;
+    the starting deltaT is only a conservative first guess. Steady-state cases
+    step directly with a unit deltaT.
+    """
     if intent.solver_mode == "steadyState":
         return TimeControl(
             start_time=0, end_time=1000, delta_t=1.0, write_interval=10,
             adjust_time_step="no",
         )
-    if intent.geometry == "external_mesh":
+    if intent.geometry == "box":
         return TimeControl(
-            start_time=0, end_time=0.1, delta_t=1e-6, write_interval=20,
+            start_time=0, end_time=0.1, delta_t=_cfl_delta_t(intent), write_interval=20,
             adjust_time_step="yes", max_co=0.5,
         )
-    return TimeControl(start_time=0, end_time=0.1, delta_t=0.005, write_interval=20)
+    # external mesh: scale unknown, so start conservative and let the adaptivity work.
+    return TimeControl(
+        start_time=0, end_time=0.1, delta_t=1e-4, write_interval=20,
+        adjust_time_step="yes", max_co=0.5,
+    )

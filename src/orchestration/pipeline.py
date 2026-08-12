@@ -44,10 +44,12 @@ _SCHEMA = """{
   "custom_fv_solution": string,                      // full fvSolution dict body including relaxationFactors; omit to use standard preset
   "patches": [
     { "name": string,
-      "role": "inlet" | "outlet" | "wall" | "movingWall" | "empty" | "cyclic",
+      "role": "inlet" | "outlet" | "wall" | "movingWall" | "empty" | "cyclic" | "symmetry",
       "velocity": [x, y, z],                         // only for inlet / movingWall
       "pressure": number,                            // gauge or absolute Pa
       "temperature": number,                         // inlet / wall temperature [K]
+      "faces": ["xMin" | "xMax" | "yMin" | "yMax" | "zMin" | "zMax"],  // optional, box geometry only;
+                                                                       // if one patch lists faces, all must
       "bc_overrides": {                              // optional: per-field BC type overrides
         "<field>": {"type": "<bcType>", "<key>": "<value>", ...}
       }
@@ -125,10 +127,15 @@ _RESPONSE_FORMAT = {
                         "properties": {
                             "name": {"type": "string"},
                             "role": {"type": "string",
-                                     "enum": ["inlet", "outlet", "wall", "movingWall", "empty", "cyclic"]},
+                                     "enum": ["inlet", "outlet", "wall", "movingWall", "empty", "cyclic", "symmetry"]},
                             "velocity": {"type": "array", "items": {"type": "number"}},
                             "pressure": {"type": "number"},
                             "temperature": {"type": "number"},
+                            "faces": {
+                                "type": "array",
+                                "items": {"type": "string",
+                                          "enum": ["xMin", "xMax", "yMin", "yMax", "zMin", "zMax"]},
+                            },
                             "bc_overrides": {
                                 "type": "object",
                                 "additionalProperties": {

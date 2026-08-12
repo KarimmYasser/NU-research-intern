@@ -10,6 +10,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ir import CaseIntent, PatchIntent, intent_to_spec
@@ -92,7 +94,8 @@ def test_bc_overrides_applied_to_spec():
                 name="inlet",
                 role="inlet",
                 bc_overrides={"p": {"type": "totalPressure", "value": "uniform 400000"}}
-            )
+            ),
+            PatchIntent(name="walls", role="wall"),  # closes the box
         ]
     )
     spec = intent_to_spec(intent)
@@ -113,6 +116,86 @@ def test_turbulence_model_override_propagates():
     assert spec.turbulence.model == "kOmegaSST"
 
 
+def test_explicit_faces_tile_the_box():
+    """LLM-chosen faces: a 6-patch box with each face named explicitly."""
+    intent = CaseIntent(
+        geometry="box", box_size=(1.0, 1.0, 1.0), cells=(10, 10, 10),
+        patches=[
+            PatchIntent(name="inlet", role="inlet", faces=["xMin"]),
+            PatchIntent(name="outlet", role="outlet", faces=["xMax"]),
+            PatchIntent(name="top", role="wall", faces=["yMax"]),
+            PatchIntent(name="bottom", role="wall", faces=["yMin"]),
+            PatchIntent(name="front", role="wall", faces=["zMax"]),
+            PatchIntent(name="back", role="wall", faces=["zMin"]),
+        ],
+    )
+    spec = intent_to_spec(intent)
+    faces = {p.name: p.faces for p in spec.patches}
+    assert faces["inlet"] == ["xMin"]
+    assert faces["outlet"] == ["xMax"]
+    assert faces["top"] == ["yMax"]
+    assert faces["front"] == ["zMax"]
+
+
+def test_two_inlets_require_explicit_faces():
+    """Two inlets can't be expressed by the canonical map (both would take
+    xMin); intent_to_spec must raise and explicit faces must resolve it."""
+    intent = CaseIntent(
+        geometry="box", box_size=(1.0, 1.0, 1.0),
+        patches=[
+            PatchIntent(name="in1", role="inlet"),
+            PatchIntent(name="in2", role="inlet"),
+            PatchIntent(name="out", role="outlet"),
+            PatchIntent(name="walls", role="wall"),
+        ],
+    )
+    with pytest.raises(ValueError):
+        intent_to_spec(intent)
+
+    intent.patches[0].faces = ["xMin"]
+    intent.patches[1].faces = ["yMin"]
+    intent.patches[2].faces = ["xMax"]
+    intent.patches[3].faces = ["yMax", "zMin", "zMax"]
+    spec = intent_to_spec(intent)
+    faces = {p.name: p.faces for p in spec.patches}
+    assert faces["in1"] == ["xMin"] and faces["in2"] == ["yMin"]
+    assert faces["walls"] == ["yMax", "zMin", "zMax"]
+
+
+def test_3d_box_closes_z_faces_into_wall():
+    """A genuinely 3D box (no empty patch) must absorb the z faces or the mesh
+    would be open."""
+    intent = CaseIntent(
+        geometry="box", box_size=(0.1, 0.1, 0.1), cells=(10, 10, 10),
+        patches=[
+            PatchIntent(name="inlet", role="inlet"),
+            PatchIntent(name="outlet", role="outlet"),
+            PatchIntent(name="walls", role="wall"),
+        ],
+    )
+    spec = intent_to_spec(intent)
+    walls = next(p for p in spec.patches if p.name == "walls")
+    assert set(walls.faces) == {"yMin", "yMax", "zMin", "zMax"}
+
+
+def test_symmetry_role_renders_symmetryplane():
+    intent = CaseIntent(
+        geometry="box", box_size=(1.0, 1.0, 1.0),
+        patches=[
+            PatchIntent(name="inlet", role="inlet"),
+            PatchIntent(name="outlet", role="outlet"),
+            PatchIntent(name="midplane", role="symmetry"),
+            PatchIntent(name="walls", role="wall"),
+        ],
+    )
+    spec = intent_to_spec(intent)
+    mp = next(p for p in spec.patches if p.name == "midplane")
+    assert mp.type == "symmetryPlane"
+    assert mp.bc["U"].type == "symmetryPlane"
+    assert mp.bc["p"].type == "symmetryPlane"
+    assert mp.faces == ["yMin"]
+
+
 def test_custom_fv_solution_and_schemes_propagate():
     custom_sol = "relaxationFactors { fields { p 0.05; } }"
     custom_sch = "divSchemes { default none; div(phi,U) Gauss upwind; }"
@@ -126,6 +209,93 @@ def test_custom_fv_solution_and_schemes_propagate():
     spec = intent_to_spec(intent)
     assert spec.custom_fv_solution == custom_sol
     assert spec.custom_fv_schemes == custom_sch
+
+
+def _vof_intent(case_type="incompressibleVoF"):
+    return CaseIntent(
+        case_type=case_type, regime="laminar",
+        geometry="box", box_size=(0.6, 0.3, 0.01), cells=(40, 20, 1),
+        patches=[
+            PatchIntent(name="atmosphere", role="outlet", pressure=0.0),
+            PatchIntent(name="tank", role="wall"),
+            PatchIntent(name="frontBack", role="empty"),
+        ],
+    )
+
+
+def test_vof_case_type_field_pressure_and_defaults():
+    spec = intent_to_spec(_vof_intent())
+    assert spec.solver == "incompressibleVoF"
+    assert spec.numerics == "incompressibleVoF"
+    # free-surface hydrostatic pressure: p_rgh only, never p
+    names = {f.name for f in spec.fields}
+    assert names == {"U", "p_rgh", "alpha.water"}
+    # gravity defaults to -g z, phases + sigma from the registry
+    assert spec.gravity == (0, -9.81, 0)
+    assert spec.phases == ["water", "air"]
+    assert spec.surface_tension == 0.07
+    assert spec.per_phase_properties is True
+    # alpha.water BC on the outlet (inletOutlet-style would need a value; role default is zeroGradient)
+    atm = next(p for p in spec.patches if p.name == "atmosphere")
+    assert atm.bc["alpha.water"].type == "zeroGradient"
+    assert atm.bc["p_rgh"].type == "fixedValue"
+
+
+def test_multiphase_euler_per_phase_fields():
+    intent = _vof_intent(case_type="multiphaseEuler")
+    intent.regime = "turbulent"
+    spec = intent_to_spec(intent)
+    names = {f.name for f in spec.fields}
+    assert {"alpha.air", "alpha.water", "U.air", "U.water", "T.air", "T.water",
+            "k.air", "k.water", "p", "p_rgh"} <= names
+    assert "T" not in names  # per-phase temperature only, no global T
+    assert spec.phases == ["air", "water"]
+
+
+def test_xifluid_species_and_combustion_fields():
+    intent = _vof_intent(case_type="XiFluid")
+    intent.regime = "turbulent"
+    spec = intent_to_spec(intent)
+    names = {f.name for f in spec.fields}
+    assert {"b", "Xi", "Tu", "fu", "ft"} <= names
+    assert spec.species == ["fu", "ft"]
+    assert spec.gravity is None  # grounded: XiFluid has no g/p_rgh
+
+
+def test_solid_displacement_forced_laminar_and_g_fields():
+    intent = CaseIntent(
+        case_type="solidDisplacement", regime="turbulent",
+        geometry="box", box_size=(1.0, 1.0, 0.1),
+        patches=[PatchIntent(name="mech", role="wall")],
+    )
+    spec = intent_to_spec(intent)
+    names = {f.name for f in spec.fields}
+    assert names == {"D", "T"}
+    assert spec.turbulence.simulation_type == "laminar"  # solids never RAS
+    assert spec.gravity is None
+    assert spec.solid is True
+
+
+def test_isothermal_fluid_fields():
+    spec = intent_to_spec(_vof_intent(case_type="isothermalFluid"))
+    names = {f.name for f in spec.fields}
+    assert names == {"U", "p", "p_rgh", "T"}  # potential flow: no turbulence
+
+
+def test_all_case_types_render_ready():
+    """Every registered case_type expands to a spec — the registry stays in sync
+    with the field planner."""
+    from ir.case_types import CASE_TYPES
+    for ct in CASE_TYPES:
+        intent = CaseIntent(
+            case_type=ct, regime="turbulent",
+            geometry="box", box_size=(1.0, 1.0, 1.0), cells=(10, 10, 10),
+            patches=[PatchIntent(name="walls", role="wall")],
+        )
+        try:
+            intent_to_spec(intent)
+        except Exception as e:  # fail the test with context
+            raise AssertionError(f"case_type '{ct}' fails to expand: {e}") from e
 
 
 if __name__ == "__main__":

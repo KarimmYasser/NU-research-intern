@@ -6,8 +6,10 @@ emits a validated CaseSpec (spec.py) and this module renders guaranteed-valid
 v13 files. Because it is deterministic, its correctness is unit-testable against
 golden tutorials rather than dependent on model behaviour.
 
-Scope (tier 1): box geometry + incompressibleFluid solver + RAS turbulence —
-enough to render the cavity tutorial exactly. Wider coverage extends this.
+Scope: box geometry (blockMeshDict) or external mesh (case setup only);
+incompressible and compressible flow; transient and steady-state; laminar and
+RAS turbulence. Presets are chosen from the CaseSpec's numerics field, so the
+renderer itself is case-agnostic.
 """
 
 from __future__ import annotations
@@ -351,6 +353,229 @@ snGradSchemes
 
 """
 
+# Incompressible VoF preset (grounded in v13 damBreakLaminar; turbulence div
+# entries added so the turbulent damBreak variant stays expressible).
+_FVSCHEMES_INCOMPRESSIBLE_VOF = """
+ddtSchemes
+{
+    default         Euler;
+}
+
+gradSchemes
+{
+    default         Gauss linear;
+}
+
+divSchemes
+{
+    div(phi,alpha)  Gauss interfaceCompression vanLeer 1;
+
+    div(rhoPhi,U)   Gauss linearUpwind grad(U);
+
+    div(rhoPhi,k)   Gauss upwind;
+    div(rhoPhi,epsilon) Gauss upwind;
+    div(rhoPhi,omega) Gauss upwind;
+
+    div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear;
+}
+
+laplacianSchemes
+{
+    default         Gauss linear uncorrected;
+}
+
+interpolationSchemes
+{
+    default         linear;
+}
+
+snGradSchemes
+{
+    default         uncorrected;
+}
+
+"""
+
+_FVSOLUTION_INCOMPRESSIBLE_VOF = """
+solvers
+{
+    "alpha.*"
+    {
+        nCorrectors     2;
+        nSubCycles      1;
+
+        MULESCorr       yes;
+
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-8;
+        relTol          0;
+    }
+
+    "pcorr.*"
+    {
+        solver          PCG;
+        preconditioner  DIC;
+        tolerance       1e-5;
+        relTol          0;
+    }
+
+    p_rgh
+    {
+        solver          PCG;
+        preconditioner  DIC;
+        tolerance       1e-7;
+        relTol          0.05;
+    }
+
+    p_rghFinal
+    {
+        $p_rgh          ;
+        relTol          0;
+    }
+
+    "(U|k|epsilon|omega).*"
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-6;
+        relTol          0;
+        minIter         1;
+    }
+}
+
+PIMPLE
+{
+    momentumPredictor no;
+    nOuterCorrectors 1;
+    nCorrectors     3;
+    nNonOrthogonalCorrectors 0;
+}
+
+relaxationFactors
+{
+    equations
+    {
+        ".*"            1;
+    }
+}
+
+"""
+
+# Compressible VoF preset (grounded in v13 compressibleVoF/damBreak).
+_FVSCHEMES_COMPRESSIBLE_VOF = """
+ddtSchemes
+{
+    default         Euler;
+}
+
+gradSchemes
+{
+    default         Gauss linear;
+}
+
+divSchemes
+{
+    div(phi,alpha)  Gauss interfaceCompression vanLeer 1;
+
+    div(rhoPhi,U)   Gauss linearUpwind grad(U);
+
+    div(alphaRhoPhi,e) Gauss upwind;
+    div(alphaRhoPhi,T) Gauss upwind;
+
+    div(rhoPhi,K)   Gauss upwind;
+    div(phi,p)      Gauss upwind;
+
+    div(rhoPhi,k)   Gauss upwind;
+    div(rhoPhi,epsilon) Gauss upwind;
+    div(rhoPhi,omega) Gauss upwind;
+
+    div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear;
+}
+
+laplacianSchemes
+{
+    default         Gauss linear uncorrected;
+}
+
+interpolationSchemes
+{
+    default         linear;
+}
+
+snGradSchemes
+{
+    default         uncorrected;
+}
+
+"""
+
+_FVSOLUTION_COMPRESSIBLE_VOF = """
+solvers
+{
+    "alpha.*"
+    {
+        nCorrectors     2;
+        nSubCycles      1;
+
+        MULESCorr       yes;
+
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-8;
+        relTol          0;
+    }
+
+    "pcorr.*"
+    {
+        solver          PCG;
+        preconditioner  DIC;
+        tolerance       1e-5;
+        relTol          0;
+    }
+
+    p_rgh
+    {
+        solver          PCG;
+        preconditioner  DIC;
+        tolerance       1e-07;
+        relTol          0.05;
+    }
+
+    p_rghFinal
+    {
+        $p_rgh;
+        relTol          0;
+    }
+
+    "(U|T|k|epsilon|omega).*"
+    {
+        solver          smoothSolver;
+        smoother        symGaussSeidel;
+        tolerance       1e-06;
+        relTol          0;
+        minIter         1;
+    }
+}
+
+PIMPLE
+{
+    momentumPredictor   no;
+    nOuterCorrectors    1;
+    nCorrectors         3;
+    nNonOrthogonalCorrectors 0;
+}
+
+relaxationFactors
+{
+    equations
+    {
+        ".*"                1;
+    }
+}
+
+"""
+
 _FVSOLUTION_COMPRESSIBLE_STEADY = """
 solvers
 {
@@ -426,11 +651,15 @@ _FVSCHEMES = {
     "incompressibleFluid_limitedLinear": _FVSCHEMES_BODY,
     "incompressibleFluid_upwind": _FVSCHEMES_UPWIND,
     "compressibleFluid_steadyState": _FVSCHEMES_COMPRESSIBLE_STEADY,
+    "incompressibleVoF": _FVSCHEMES_INCOMPRESSIBLE_VOF,
+    "compressibleVoF": _FVSCHEMES_COMPRESSIBLE_VOF,
 }
 _FVSOLUTION = {
     "incompressibleFluid_limitedLinear": _FVSOLUTION_BODY,
     "incompressibleFluid_upwind": _FVSOLUTION_UPWIND,
     "compressibleFluid_steadyState": _FVSOLUTION_COMPRESSIBLE_STEADY,
+    "incompressibleVoF": _FVSOLUTION_INCOMPRESSIBLE_VOF,
+    "compressibleVoF": _FVSOLUTION_COMPRESSIBLE_VOF,
 }
 
 
@@ -451,6 +680,10 @@ def render_fvsolution(spec: CaseSpec) -> str:
 
 
 def render_physicalproperties(spec: CaseSpec) -> str:
+    if spec.solid:
+        return _render_solid_physical(spec)
+    if spec.is_film:
+        return _render_film_physical(spec)
     f = spec.fluid
     if f.flow_type == "compressible":
         from ir.spec import ThermoProperties
@@ -489,6 +722,221 @@ def render_momentumtransport(spec: CaseSpec) -> str:
     return f"{_header('dictionary', 'momentumTransport', 'constant')}\n{body}\n{FOOTER}\n"
 
 
+def _render_solid_physical(spec: CaseSpec) -> str:
+    """SolidDisplacement property dict, grounded in solidDisplacement/plateHole. A
+    steel default (E=2e11, nu=0.3, rho=7854, Cv=434, kappa=60.5)."""
+    body = "\n".join(
+        f"\n{key}\n{{\n    type        uniform;\n    value       {value};\n}}"
+        for key, value in (
+            ("rho", "7854"),
+            ("nu", "0.3"),
+            ("E", "2e+11"),
+            ("Cv", "434"),
+            ("kappa", "60.5"),
+        )
+    )
+    return f"{_header('dictionary', 'physicalProperties', 'constant')}\n{body}\n\n{FOOTER}\n"
+
+
+def _render_film_physical(spec: CaseSpec) -> str:
+    """Thin-film property dict, grounded in isothermalFilm/rivuletPanel: thermo
+    (water) + surface tension + deltaWet."""
+    body = (
+        "\nthermoType\n{\n"
+        "    type            heRhoThermo;\n"
+        "    mixture         pureMixture;\n"
+        "    properties      liquid;\n"
+        "    energy          sensibleInternalEnergy;\n"
+        "}\n\n"
+        "mixture\n{\n    H2O;\n}\n\n"
+        "sigma\n{\n"
+        "    type    constant;\n"
+        f"    sigma   {_num(spec.surface_tension if spec.surface_tension is not None else 0.07)};\n"
+        "}\n\n"
+        f"{_kv('deltaWet', '1e-8')}\n"
+    )
+    return f"{_header('dictionary', 'physicalProperties', 'constant')}\n{body}\n\n{FOOTER}\n"
+
+
+def render_g(spec: CaseSpec) -> str:
+    """constant/g -> uniformDimensionedVectorField (grounded in damBreak/g)."""
+    gx, gy, gz = spec.gravity or (0, 0, 0)
+    body = (
+        f"\n{_kv('dimensions', '[0 1 -2 0 0 0 0]')}\n\n"
+        f"{_kv('value', f'({_num(gx)} {_num(gy)} {_num(gz)})')}\n"
+    )
+    return f"{_header('uniformDimensionedVectorField', 'g', 'constant')}\n{body}\n\n{FOOTER}\n"
+
+
+# Per-phase incompressible transport defaults, from the v13 tutorials / SI values.
+_PHASE_NU_RHO: dict[str, tuple[float, float]] = {
+    "water": (1e-06, 1000.0),
+    "air": (1.48e-05, 1.0),
+    "oil": (1e-04, 900.0),
+    "mercury": (1.14e-07, 13546.0),
+    "sludge": (1e-06, 1996.0),
+    "carrier": (1.48e-05, 1.0),
+    "cloud": (1e-06, 1000.0),
+}
+
+
+def _per_phase_nu_rho(phase: str, default_nu: float) -> tuple[float, float]:
+    return _PHASE_NU_RHO.get(phase, (default_nu, 1000.0))
+
+
+def render_per_phase_physical(spec: CaseSpec, phase: str) -> str:
+    """constant/physicalProperties.<phase>, grounded in:
+      - incompressible: incompressibleVoF/damBreakLaminar + incompressibleDriftFlux/dahl
+      - compressible:  compressibleVoF/damBreak (water: liquidProperties, air: perfectGas)"""
+    if not spec.compressible_phases:
+        default_nu = float(spec.fluid.nu.split(" ")[0]) if " " in spec.fluid.nu else float(spec.fluid.nu)
+        nu, rho = _per_phase_nu_rho(phase, default_nu)
+        body = (
+            f"\n{_kv('viscosityModel', 'constant')}\n\n"
+            f"{_kv('nu', _num(nu))}\n\n"
+            f"{_kv('rho', _num(rho))}\n"
+        )
+        return f"{_header('dictionary', f'physicalProperties.{phase}', 'constant')}\n{body}\n\n{FOOTER}\n"
+    if phase == "water":
+        body = (
+            "\nthermoType\n{\n"
+            "    type            heRhoThermo;\n"
+            "    mixture         pureMixture;\n"
+            "    properties      liquid;\n"
+            "    energy          sensibleInternalEnergy;\n"
+            "}\n\n"
+            "mixture\n{\n    H2O;\n}\n"
+        )
+    else:
+        t = spec.fluid.thermo
+        body = (
+            "\nthermoType\n{\n"
+            "    type            heRhoThermo;\n"
+            "    mixture         pureMixture;\n"
+            "    transport       const;\n"
+            "    thermo          hConst;\n"
+            "    equationOfState perfectGas;\n"
+            "    specie          specie;\n"
+            "    energy          sensibleInternalEnergy;\n"
+            "}\n\n"
+            "mixture\n{\n"
+            "    specie\n    {\n"
+            f"{_kv('molWeight', _num(t.mol_weight if t else 28.9), indent=8)}\n"
+            "    }\n"
+            "    thermodynamics\n    {\n"
+            f"{_kv('Cp', _num(t.cp if t else 1007), indent=8)}\n"
+            f"{_kv('hf', _num(t.hf if t else 0), indent=8)}\n"
+            "    }\n"
+            "    transport\n    {\n"
+            f"{_kv('mu', _num(t.mu if t else 1.84e-05), indent=8)}\n"
+            f"{_kv('Pr', _num(t.pr if t else 0.7), indent=8)}\n"
+            "    }\n"
+            "}\n"
+        )
+    return f"{_header('dictionary', f'physicalProperties.{phase}', 'constant')}\n{body}\n\n{FOOTER}\n"
+
+
+def render_phaseproperties(spec: CaseSpec) -> str:
+    """constant/phaseProperties per solver family, grounded in the v13 tutorials:
+      - 2-phase VoF:  incompressibleVoF/damBreakLaminar (scalar sigma)
+      - n-phase VoF:  incompressibleMultiphaseVoF/damBreak4phase (pairwise sigmas)
+      - VoF 2-phase compressible: compressibleVoF/damBreak (liquidProperties sigma)
+      - drift-flux:   incompressibleDriftFlux/dahl
+      - Euler-Euler:  multiphaseEuler/bubbleColumnLaminar
+    """
+    phases = " ".join(spec.phases)
+    if spec.relative_velocity_model:  # drift-flux
+        body = (
+            f"\n{_kv('phases', f'({phases})')}\n\n"
+            f"{_kv('relativeVelocityModel', spec.relative_velocity_model)}\n\n"
+            "\"(simple|general)Coeffs\"\n{\n"
+            f"{_kv('Vc', '2.241e-4', indent=4)}\n"
+            f"{_kv('a', '285.84', indent=4)}\n"
+            f"{_kv('a1', '0.1', indent=4)}\n"
+            f"{_kv('residualAlpha', '0', indent=4)}\n"
+            "}\n"
+        )
+    elif spec.case_type == "multiphaseEuler":
+        primary = spec.phases[-1]
+        phase_blocks = []
+        for i, ph in enumerate(spec.phases):
+            d_model = "isothermal" if ph == "air" else "constant"
+            d_coeffs = f"d0              3e-3;\n        p0              1e5;" if d_model == "isothermal" else f"d               {_num(1e-4)};"
+            phase_blocks.append(
+                f"{ph}\n{{\n"
+                "    type            purePhaseModel;\n\n"
+                f"    diameterModel   {d_model};\n"
+                f"    {d_model}Coeffs\n    {{\n        {d_coeffs}\n    }}\n\n"
+                "    residualAlpha   1e-6;\n}"
+            )
+        blending_lines = []
+        for key in ("default", "segregated"):
+            off = "0.5" if key == "segregated" else "0.3"
+            blending_lines.append(
+                f"    {key}\n    {{\n"
+                "        type            linear;\n"
+                f"        minFullyContinuousAlpha.{primary} 0.7;\n"
+                f"        minPartlyContinuousAlpha.{primary} {off};\n"
+                + "".join(
+                    f"        minFullyContinuousAlpha.{ph} 0.7;\n"
+                    f"        minPartlyContinuousAlpha.{ph} {off};\n"
+                    for ph in spec.phases if ph != primary
+                )
+                + "    }"
+            )
+        pairs = " ".join(f"{spec.phases[0]}_{ph}" for ph in spec.phases[1:])
+        sigma_blocks = "\n".join(
+            f"    {spec.phases[0]}_{ph}\n    {{\n        type            constant;\n"
+            f"        sigma           {_num(spec.surface_tension if spec.surface_tension is not None else 0.07)};\n    }}"
+            for ph in spec.phases[1:]
+        )
+        body = (
+            f"\n{_kv('phases', f'({phases})')}\n\n"
+            f"{_kv('referencePhase', primary)}\n\n"
+            + "\n\n".join(phase_blocks)
+            + "\n\nblending\n{\n" + "\n".join(blending_lines) + "\n}\n\n"
+            + f"surfaceTension\n{{\n{sigma_blocks}\n}}\n"
+        )
+    else:  # VoF families
+        sigma = spec.surface_tension if spec.surface_tension is not None else 0.07
+        header = f"\n{_kv('phases', f'({phases})')}\n\n"
+        if len(spec.phases) == 2 and not spec.compressible_phases:
+            # grounded: incompressibleVoF/damBreakLaminar  (scalar sigma)
+            body = header + f"{_kv('sigma', _num(sigma))}\n"
+        elif len(spec.phases) == 2:  # compressibleVoF/damBreak
+            body = (
+                header
+                + "sigma\n{\n"
+                + f"    type    liquidProperties;\n    phase   {spec.phases[0]};\n"
+                + "}\n"
+            )
+        else:  # n-phase: pairwise sigmas  (damBreak4phase sorts pairs alphabetically)
+            pairs = sorted(
+                tuple(sorted((a, b)))
+                for i, a in enumerate(spec.phases) for b in spec.phases[i + 1:]
+            )
+            body = (
+                header
+                + "sigmas\n(\n"
+                + "".join(f"    ({a} {b}) {_num(sigma)}\n" for a, b in pairs)
+                + ");\n"
+            )
+    return f"{_header('dictionary', 'phaseProperties', 'constant')}\n{body}\n\n{FOOTER}\n"
+
+
+def render_dynamicmeshdict(spec: CaseSpec) -> str:
+    """constant/dynamicMeshDict for movingMesh, grounded in movingMesh/SnakeRiverCanyon."""
+    body = (
+        "\nmover\n{\n"
+        "    type            motionSolver;\n\n"
+        '    libs            ("libfvMotionSolvers.so");\n\n'
+        "    motionSolver    displacementSBRStress;\n\n"
+        "    diffusivity     quadratic inverseDistance 1(minZ);\n"
+        "}\n"
+    )
+    return f"{_header('dictionary', 'dynamicMeshDict', 'constant')}\n{body}\n\n{FOOTER}\n"
+
+
 def render_field(field: Field, patches: list[Patch]) -> str:
     dims = "[" + " ".join(str(d) for d in field.dimensions) + "]"
     bf_parts = []
@@ -524,8 +972,23 @@ def render(spec: CaseSpec) -> CaseFiles:
     case.system["controlDict"] = render_controldict(spec)
     case.system["fvSchemes"] = render_fvschemes(spec)
     case.system["fvSolution"] = render_fvsolution(spec)
-    case.constant["physicalProperties"] = render_physicalproperties(spec)
-    case.constant["momentumTransport"] = render_momentumtransport(spec)
+    # Physics property layer: base physicalProperties is replaced by per-phase files
+    # for VoF/Euler families; solids and films get their own property dictionaries.
+    if spec.per_phase_properties:
+        for phase in spec.phases:
+            case.constant[f"physicalProperties.{phase}"] = render_per_phase_physical(spec, phase)
+    else:
+        case.constant["physicalProperties"] = render_physicalproperties(spec)
+    if spec.phases and spec.case_type != "incompressibleDenseParticleFluid":
+        case.constant["phaseProperties"] = render_phaseproperties(spec)
+    if spec.solid:
+        pass  # solidDisplacement needs no momentumTransport
+    else:
+        case.constant["momentumTransport"] = render_momentumtransport(spec)
+    if spec.gravity is not None:
+        case.constant["g"] = render_g(spec)
+    if spec.case_type == "movingMesh":
+        case.constant["dynamicMeshDict"] = render_dynamicmeshdict(spec)
     for field in spec.fields:
         case.zero[field.name] = render_field(field, spec.patches)
     return case

@@ -239,6 +239,42 @@ laplacianSchemes { default Gauss linear corrected; }
 
 # ─── Patch name existence check ───────────────────────────────────────────────
 
+def test_too_many_box_patches_caught(validator):
+    """A box with more wall patches than remaining side faces must be flagged
+    (and resolved by listing faces explicitly)."""
+    intent = CaseIntent(
+        geometry="box", box_size=(1.0, 1.0, 1.0),
+        patches=[PatchIntent(name=f"wall{i}", role="wall") for i in range(7)],
+    )
+    errors = validator.validate(intent)
+    assert any("could not be assigned" in e.message for e in errors), f"{errors}"
+
+
+def test_duplicate_explicit_faces_caught(validator):
+    intent = CaseIntent(
+        geometry="box", box_size=(1.0, 1.0, 1.0),
+        patches=[
+            PatchIntent(name="a", role="wall", faces=["xMin"]),
+            PatchIntent(name="b", role="wall", faces=["xMin"]),
+            PatchIntent(name="c", role="wall", faces=["xMax", "yMin", "yMax", "zMin", "zMax"]),
+        ],
+    )
+    errors = validator.validate(intent)
+    assert any("multiple patches" in e.message for e in errors), f"{errors}"
+
+
+def test_faces_rejected_for_external_mesh(validator):
+    intent = _make_simple_intent(
+        patches=[
+            PatchIntent(name="inlet", role="inlet", faces=["xMin"]),
+            PatchIntent(name="outlet", role="outlet"),
+            PatchIntent(name="walls", role="wall"),
+        ]
+    )
+    errors = validator.validate(intent)
+    assert any("faces" in e.message and "external_mesh" in e.message for e in errors), f"{errors}"
+
+
 def test_invented_patch_name_is_caught(validator):
     from mesh.mesh_io import MeshPatch
     known = [

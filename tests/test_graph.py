@@ -131,7 +131,7 @@ def test_full_run_writes_case_and_copies_polymesh(tmp_path, monkeypatch):
         lambda self, case_dir, skip_mesh_generation=False: ValidationResult(True, "foamRun"),
     )
 
-    final = graph_mod.run("dummy nl", mesh_dir, case_dir)
+    final = graph_mod.run("dummy nl", case_dir, mesh_dir=mesh_dir)
 
     assert final["validation"].ok
     assert final["attempt"] == 1
@@ -139,7 +139,38 @@ def test_full_run_writes_case_and_copies_polymesh(tmp_path, monkeypatch):
     assert (case_dir / "constant" / "polyMesh" / "points").read_text() == "p"
     assert (case_dir / "0" / "U").is_file()
     assert (case_dir / "system" / "controlDict").is_file()
-    assert not (case_dir / "system" / "blockMeshDict").exists()  # never generated (R1)
+    assert not (case_dir / "system" / "blockMeshDict").exists()  # external mesh: no blockMesh
+
+
+def test_full_run_box_geometry_generates_blockmesh(tmp_path, monkeypatch):
+    """Without a mesh_dir the graph renders a box case (blockMeshDict) and runs
+    the full ladder — the box path through the same orchestrator."""
+    case_dir = tmp_path / "case"
+
+    def _box_intent(nl, config=None, max_retries=3, known_patches=None):
+        assert known_patches == []  # no external mesh -> no known patch names
+        return CaseIntent(
+            regime="laminar", nu=1e-5, geometry="box", box_size=(0.1, 0.1, 0.1),
+            cells=(20, 20, 1),
+            patches=[
+                PatchIntent(name="movingWall", role="movingWall", velocity=(1, 0, 0)),
+                PatchIntent(name="fixedWalls", role="wall"),
+                PatchIntent(name="frontAndBack", role="empty"),
+            ],
+        )
+
+    monkeypatch.setattr(graph_mod, "extract_intent", _box_intent)
+    monkeypatch.setattr(
+        graph_mod.ValidationAgent, "run_ladder",
+        lambda self, case_dir, skip_mesh_generation=False: ValidationResult(True, "foamRun"),
+    )
+
+    final = graph_mod.run("dummy box nl", case_dir)
+
+    assert final["validation"].ok
+    assert (case_dir / "system" / "blockMeshDict").is_file()  # box -> blockMeshDict rendered
+    assert not (case_dir / "constant" / "polyMesh").exists()  # nothing copied
+    assert (case_dir / "0" / "U").is_file()
 
 
 def test_full_run_retries_on_failure_then_stops(tmp_path, monkeypatch):
@@ -152,7 +183,7 @@ def test_full_run_retries_on_failure_then_stops(tmp_path, monkeypatch):
         lambda self, case_dir, skip_mesh_generation=False: ValidationResult(False, "checkMesh"),
     )
 
-    final = graph_mod.run("dummy nl", mesh_dir, case_dir, max_attempts=2)
+    final = graph_mod.run("dummy nl", case_dir, mesh_dir=mesh_dir, max_attempts=2)
 
     assert not final["validation"].ok
     assert final["attempt"] == 2  # stopped after max_attempts, did not loop forever

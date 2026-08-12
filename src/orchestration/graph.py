@@ -22,9 +22,13 @@ Routing rationale:
                           gaps so these errors are often fixable this way)
   - MESH_*/SOLVER_*    → build_intent (full intent re-extraction)
 
-Scope for this milestone (R1: no mesh generation in this repo): `mesh_dir` is
-required and always points at an externally-provided mesh. blockMesh is never
-run; the ladder starts at checkMesh.
+Two input modes:
+  - `mesh_dir` provided: externally-supplied mesh. The boundary file is parsed
+    for real patch names, polyMesh is copied as-is, and the ladder skips
+    blockMesh (starts at checkMesh).
+  - no `mesh_dir`: box geometry. Patch names come from the prompt, the renderer
+    emits a blockMeshDict, and the full ladder (blockMesh -> checkMesh ->
+    foamRun) runs.
 """
 
 from __future__ import annotations
@@ -48,7 +52,7 @@ DEFAULT_MAX_ATTEMPTS = 3
 
 class CaseGraphState(TypedDict, total=False):
     nl: str  # the user's natural-language problem statement
-    mesh_dir: str  # path to the externally-provided mesh (required, R1)
+    mesh_dir: Optional[str]  # path to an externally-provided mesh (box geometry if absent)
     case_dir: str  # where to write the rendered case
     config: Optional[LLMConfig]
 
@@ -96,12 +100,14 @@ def _collect_file_context(state: CaseGraphState) -> str:
 # --- nodes ------------------------------------------------------------------
 
 def read_mesh(state: CaseGraphState) -> dict:
-    """Read the provided mesh's boundary file to learn real patch names/types.
-
-    No mesh generation happens here or anywhere in this repo (R1) - this only
-    parses the small `boundary` dictionary (mesh_io.parse_boundary_file).
+    """If a mesh was provided, read its boundary file to learn real patch
+    names/types (mesh_io.parse_boundary_file). Otherwise the case is box
+    geometry and the renderer will generate the mesh via blockMesh.
     """
-    mesh_dir = state.get("mesh_dir", "")
+    mesh_dir = state.get("mesh_dir")
+    if not mesh_dir:
+        print("\n[1/5] No external mesh provided - box geometry will be meshed by blockMesh.", flush=True)
+        return {"known_patches": []}
     print(f"\n[1/5] Reading mesh boundary from {mesh_dir}...", flush=True)
     patches = load_external_mesh(Path(mesh_dir))
     print(f"      -> Loaded {len(patches)} patches: {[p.name for p in patches]}", flush=True)
@@ -162,7 +168,8 @@ def render_case(state: CaseGraphState) -> dict:
     case_dir = Path(case_dir_str)
     case = render(spec)
     case.write(case_dir)
-    copy_polymesh(Path(mesh_dir_str), case_dir)
+    if mesh_dir_str:
+        copy_polymesh(Path(mesh_dir_str), case_dir)
 
     file_overrides = state.get("file_overrides")
     if file_overrides:
@@ -199,11 +206,13 @@ def patch_files(state: CaseGraphState) -> dict:
 
 
 def validate_case(state: CaseGraphState) -> dict:
-    """Run the validation ladder, skipping blockMesh since the mesh is
-    externally provided (validation_agent.run_ladder(skip_mesh_generation=True))."""
+    """Run the validation ladder. blockMesh is skipped only when the mesh is
+    externally provided (validation_agent.run_ladder(skip_mesh_generation=True));
+    box-geometry cases run the full ladder including blockMesh."""
     case_dir_str = state.get("case_dir", "")
+    mesh_dir_str = state.get("mesh_dir")
     print(f"\n[5/5] Running Docker OpenFOAM validation ladder on {case_dir_str}...", flush=True)
-    result = ValidationAgent().run_ladder(Path(case_dir_str), skip_mesh_generation=True)
+    result = ValidationAgent().run_ladder(Path(case_dir_str), skip_mesh_generation=bool(mesh_dir_str))
     feedback = None
     if not result.ok:
         feedback = f"[{result.stage}] " + "\n".join(e.message for e in result.errors)
@@ -274,13 +283,18 @@ def build_graph():
     return graph
 
 
-def run(nl: str, mesh_dir: Path, case_dir: Path, config: LLMConfig | None = None,
+def run(nl: str, case_dir: Path, mesh_dir: Path | None = None, config: LLMConfig | None = None,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS) -> CaseGraphState:
-    """Convenience entry point: compile the graph and run it to completion."""
+    """Convenience entry point: compile the graph and run it to completion.
+
+    `mesh_dir` is optional. When given, the case is built around the provided
+    mesh (patch names read from its boundary file). When omitted, the case uses
+    box geometry and is meshed by blockMesh during validation.
+    """
     app = build_graph().compile()
     initial: CaseGraphState = {
         "nl": nl,
-        "mesh_dir": str(mesh_dir),
+        "mesh_dir": str(mesh_dir) if mesh_dir else None,
         "case_dir": str(case_dir),
         "config": config,
         "attempt": 0,
