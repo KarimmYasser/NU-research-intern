@@ -638,43 +638,31 @@ solvers
 {
     "rho.*"
     {
-        solver          PCG;
-        preconditioner  DIC;
-        tolerance       0;
+        solver          smoothSolver;
+        smoother        GaussSeidel;
+        tolerance       1e-06;
         relTol          0;
     }
 
-    p
+    "p.*"
     {
         solver          GAMG;
-        smoother        GaussSeidel;
-        tolerance       1e-06;
-        relTol          0.01;
-        maxIter         50;
+        smoother        DIC;
+        tolerance       1e-08;
+        relTol          0.00;
+        maxIter         25;
         cacheAgglomeration true;
         nCellsInCoarsestLevel 1000;
         agglomerator    faceAreaPair;
         mergeLevels     1;
     }
 
-    pFinal
-    {
-        $p;
-        relTol          0.01;
-    }
-
-    "(U|h|e|k|epsilon|R)"
+    "(U|h|e|k|epsilon|omega|R).*"
     {
         solver          PBiCGStab;
         preconditioner  DILU;
         tolerance       1e-06;
         relTol          0.01;
-    }
-
-    "(U|h|e|k|epsilon|R)Final"
-    {
-        $"(U|h|e|k|epsilon|R)";
-        relTol          0;
     }
 }
 
@@ -690,15 +678,16 @@ relaxationFactors
 {
     fields
     {
-        p          0.3;
+        p          0.2;
+        rho        0.05;
     }
     equations
     {
-        U               0.4;
-        T               0.4;
-        k               0.4;
-        epsilon         0.4;
-        h               0.4;
+        U               0.5;
+        T               0.5;
+        k               0.5;
+        epsilon         0.5;
+        h               0.5;
     }
 }
 
@@ -711,43 +700,31 @@ solvers
 {
     "rho.*"
     {
-        solver          PCG;
-        preconditioner  DIC;
-        tolerance       0;
+        solver          smoothSolver;
+        smoother        GaussSeidel;
+        tolerance       1e-06;
         relTol          0;
     }
 
-    p
+    "p.*"
     {
         solver          GAMG;
-        smoother        GaussSeidel;
-        tolerance       1e-06;
-        relTol          0.01;
-        maxIter         50;
+        smoother        DIC;
+        tolerance       1e-08;
+        relTol          0.00;
+        maxIter         25;
         cacheAgglomeration true;
         nCellsInCoarsestLevel 1000;
         agglomerator    faceAreaPair;
         mergeLevels     1;
     }
 
-    pFinal
-    {
-        $p;
-        relTol          0.01;
-    }
-
-    "(U|h|e|k|epsilon|R)"
+    "(U|h|e|k|epsilon|omega|R).*"
     {
         solver          PBiCGStab;
         preconditioner  DILU;
         tolerance       1e-06;
         relTol          0.01;
-    }
-
-    "(U|h|e|k|epsilon|R)Final"
-    {
-        $"(U|h|e|k|epsilon|R)";
-        relTol          0;
     }
 }
 
@@ -763,16 +740,16 @@ relaxationFactors
 {
     fields
     {
-        p          0.7;
+        p          0.2;
         rho        0.05;
     }
     equations
     {
-        U               0.7;
-        T               0.7;
-        k               0.7;
-        epsilon         0.7;
-        h               0.7;
+        U               0.5;
+        T               0.5;
+        k               0.5;
+        epsilon         0.5;
+        h               0.5;
     }
 }
 
