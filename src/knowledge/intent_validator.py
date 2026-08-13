@@ -392,11 +392,26 @@ class IntentValidator:
                     )]
             agglom_match = re.search(r"\bagglomerator\s+([A-Za-z0-9_]+)", block)
             if agglom_match:
-                agg = agglom_match.group(1)
-                if agg not in valid_agglomerators:
+                ag = agglom_match.group(1)
+                if ag not in valid_agglomerators:
                     return [IntentValidationError(
                         field=path,
-                        message=f"Unknown GAMG agglomerator '{agg}'. Valid GAMG agglomerators: {sorted(valid_agglomerators)}"
+                        message=f"Invalid GAMG agglomerator '{ag}'. Valid choices: {sorted(valid_agglomerators)}."
+                    )]
+
+        # Macro reference check: $U; when U is not explicitly defined in solvers block
+        if re.search(r"^\s*\$U\s*;", body, re.M):
+            solvers_block = re.search(r"solvers\s*\{([^}]+)\}", body, re.DOTALL)
+            if solvers_block:
+                sb_text = solvers_block.group(1)
+                if not re.search(r"^\s*\"?U\"?\s*\{", sb_text, re.M):
+                    return [IntentValidationError(
+                        field=path,
+                        message=(
+                            "fvSolution references macro '$U;' but no explicit solver block 'U' exists in `solvers`. "
+                            "When using regex solver blocks like '\"(U|h|e|k|epsilon|R)\"', use '$\"(U|h|e|k|epsilon|R)\";' "
+                            "to inherit settings."
+                        )
                     )]
 
         return []

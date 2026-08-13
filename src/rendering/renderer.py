@@ -289,7 +289,7 @@ solvers
 
     "(U|k|epsilon)Final"
     {
-        $U;
+        $"(U|k|epsilon)";
         relTol          0;
     }
 }
@@ -673,7 +673,7 @@ solvers
 
     "(U|h|e|k|epsilon|R)Final"
     {
-        $U;
+        $"(U|h|e|k|epsilon|R)";
         relTol          0;
     }
 }
@@ -746,7 +746,7 @@ solvers
 
     "(U|h|e|k|epsilon|R)Final"
     {
-        $U;
+        $"(U|h|e|k|epsilon|R)";
         relTol          0;
     }
 }
