@@ -17,10 +17,13 @@ from __future__ import annotations
 import re
 from typing import Iterator
 
-# Matches the start of a top-level entry: optional leading whitespace, then a
+# Matches the start of a top-level entry: optional whitespace, then a
 # name (word or quoted), then `{`-block, `;`-terminated value, or sub-dict.
+# Not line-anchored: an LLM override can compress the whole file onto one line
+# (`... } solvers { ... }`), so the name may appear mid-line. The negative
+# lookbehind stops matches inside words/quoted values.
 _SECTION_RE = re.compile(
-    r'^\s*(?P<name>"[^"]+"|[A-Za-z][A-Za-z0-9_]*)\s*(?=\{|;|$)', re.M
+    r'(?<![\w"\'])\s*(?P<name>"[^"]+"|[A-Za-z][A-Za-z0-9_]*)\s*(?=\{|;|$)', re.M
 )
 
 _HEADER_RE = re.compile(r"^\s*FoamFile\s*\{", re.M)
@@ -73,8 +76,9 @@ def entries(text: str | None) -> dict[str, str]:
     if not text:
         return out
     body = strip_comments(text)
-    # Each entry: name (word or quoted) then tokens until ';' or '{'.
-    for m in re.finditer(r'(?:^|\n)\s*(?P<name>"[^"]+"|[A-Za-z][A-Za-z0-9_]*)\s*', body):
+    # Each entry: name (word or quoted) then tokens until ';' or '{'. Matches
+    # mid-line too (one-line LLM overrides).
+    for m in re.finditer(r'(?<![\w"\'])\s*(?P<name>"[^"]+"|[A-Za-z][A-Za-z0-9_]*)\s*', body):
         start = m.end()
         if start >= len(body) or body[start] == "{":
             continue  # sub-dict (or trailing "name {" without body)
@@ -87,19 +91,61 @@ def entries(text: str | None) -> dict[str, str]:
     return out
 
 
+def sub_blocks(text: str | None) -> list[tuple[str, str]]:
+    """Top-level `name { ... }` sub-blocks of a section body, in order.
+
+    Returns (name, body) pairs. Matches mid-line so one-line LLM overrides
+    (`... } solvers { p { solver GAMG; } ...`) are handled.
+    """
+    out: list[tuple[str, str]] = []
+    if not text:
+        return out
+    body = strip_comments(text)
+    for m in _SECTION_RE.finditer(body):
+        name = m.group("name").strip('"')
+        pos = m.end()
+        while pos < len(body) and body[pos] not in "{};":
+            pos += 1
+        if pos >= len(body) or body[pos] != "{":
+            continue  # scalar entry, not a sub-block
+        depth = 1
+        i = pos + 1
+        while depth and i < len(body):
+            if body[i] == "{":
+                depth += 1
+            elif body[i] == "}":
+                depth -= 1
+            i += 1
+        if depth == 0:
+            out.append((name, body[pos + 1 : i - 1]))
+    return out
+
+
 def keys(text: str | None) -> list[str]:
     """Top-level entry names in a section body, in order (both scalar `key value;`
-    entries and `key { ... }` sub-dict names, quoted keys unquoted)."""
+    entries and `key { ... }` sub-dict names, quoted keys unquoted).
+
+    A word directly followed by `;` is a *value* token (e.g. `solver GAMG;`
+    mid-line), not a key — only names that open a sub-dict (`name {`) or carry a
+    value before the `;` (`name value;`) are keys.
+    """
     out: list[str] = []
     if not text:
         return out
     body = strip_comments(text)
-    for m in re.finditer(r'(?:^|\n)\s*(?P<name>"[^"]+"|[A-Za-z][A-Za-z0-9_]*)\s*', body):
+    for m in re.finditer(r'(?<![\w"\'])\s*(?P<name>"[^"]+"|[A-Za-z][A-Za-z0-9_]*)\s*', body):
         start = m.end()
         if start >= len(body):
             continue
-        if body[start] in "{;":
-            out.append(m.group("name").strip('"'))
+        nxt = body[start]
+        if nxt == "{":
+            out.append(m.group("name").strip('"'))  # sub-dict name
+        elif nxt != ";":
+            # scalar entry: name must be followed by a value, then ';' — the
+            # value itself ends the name's claim before the ';'.
+            end = body.find(";", start)
+            if end != -1 and not body[start:end].lstrip().startswith("{"):
+                out.append(m.group("name").strip('"'))
     return out
 
 

@@ -79,8 +79,10 @@ def test_audit_flags_missing_rho_relaxation_for_compressible(tmp_path):
     """The RHVT first-solve NaN root cause: compressible transient fluid needs a
     rho field relaxation. A compressible-looking case without it must fail."""
     d = _box_case(tmp_path)
-    # Make the case look compressible.
-    (d / "constant" / "thermophysicalProperties").write_text(
+    # Make the case look compressible. v13 carries the thermo dict inside
+    # constant/physicalProperties (thermoType block), not the legacy
+    # thermophysicalProperties name.
+    (d / "constant" / "physicalProperties").write_text(
         "FoamFile\n{\n    version 2.0;\n    class dictionary;\n}\n"
         "thermoType\n{\n    type heRhoThermo;\n    mixture pureMixture;\n    "
         "transport const;\n    thermo hConst;\n    equationOfState perfectGas;\n}\n"
@@ -112,6 +114,39 @@ def test_audit_flags_missing_rho_relaxation_for_compressible(tmp_path):
     assert any(f.code == "missing_energy_solver" and f.level == "fail" for f in findings)
 
 
+def test_audit_flags_incomplete_solver_entries(tmp_path):
+    """A GAMG solver entry without a `smoother` key is the live
+    'keyword smoother is undefined in dictionary solvers/h' DICTIONARY_SYNTAX
+    failure — must be caught at Level A, not in the Docker ladder."""
+    d = _box_case(tmp_path)
+    sol = d / "system" / "fvSolution"
+    text = sol.read_text()
+    text = text.replace(
+        "        solver          smoothSolver;\n"
+        "        smoother        GaussSeidel;\n",
+        "        solver          GAMG;\n",
+    )
+    sol.write_text(text)
+    findings = audit_case(d)
+    assert any(f.code == "incomplete_solver_entries" and f.level == "fail" for f in findings)
+
+
+def test_audit_flags_incomplete_solver_entries_one_line(tmp_path):
+    """The LLM compresses fvSolution onto one line; the mid-line parser must
+    still find solver entries missing required keys."""
+    d = _box_case(tmp_path)
+    sol = d / "system" / "fvSolution"
+    sol.write_text(
+        "FoamFile\n{\n    version 2.0;\n    class dictionary;\n    object fvSolution;\n}\n"
+        "solvers { p { solver GAMG; tolerance 1e-06; relTol 0.1; } "
+        "U { solver smoothSolver; smoother GaussSeidel; tolerance 1e-05; } "
+        "h { solver GAMG; } }\n"
+        "PIMPLE { nCorrectors 2; }\n"
+    )
+    findings = audit_case(d)
+    assert any(f.code == "incomplete_solver_entries" and f.level == "fail" for f in findings)
+
+
 def test_audit_flags_patch_not_in_field(tmp_path):
     """A 0/ field missing a mesh boundary patch -> patchNotInMesh read error."""
     d = _box_case(tmp_path)
@@ -131,6 +166,25 @@ def test_audit_tolerates_malformed_files(tmp_path):
     (d / "0" / "U").write_text("")  # empty field file must not crash the audit
     findings = audit_case(d)  # must not raise
     assert findings
+
+
+def test_audit_flags_loop_block_ddt_mismatch(tmp_path):
+    """A transient (Euler) case whose fvSolution only has a SIMPLE block must
+    FAIL Level A: the v13 module reads PIMPLE for transient and dies with
+    'keyword PIMPLE is undefined' (seen live after an LLM fvSolution override)."""
+    d = _box_case(tmp_path)
+    sol = d / "system" / "fvSolution"
+    text = sol.read_text()
+    import re
+    text = re.sub(r"\nPIMPLE\n\{.*?\n\}\n", "\n", text, flags=re.S)
+    text = text.replace(
+        "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n",
+        "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n"
+        "SIMPLE\n{\n    nCorrectors 1;\n}\n",
+    )
+    sol.write_text(text)
+    findings = audit_case(d)
+    assert any(f.code == "loop_block_mismatch" and f.level == "fail" for f in findings)
 
 
 # --- Level B: checkMesh metrics -------------------------------------------
@@ -308,6 +362,73 @@ DILUPBiCGStab:  Solving for Ux, Initial residual = 1e-10, Final residual = 1e-10
     steps, n = parse_residuals(log)
     pred = predict_from_residuals(steps, n)
     assert pred.prediction == "PASS"
+
+
+def test_predictor_small_rising_residual_is_warn_not_fail():
+    """A pressure-coupling transient (p residual drifting 0.03 -> 0.2 while
+    staying small) must NOT be FAILed when a sibling field is decaying: the
+    lid-driven cavity live run showed the full solver converging with residuals
+    exactly like this. Only a rise to RISING_MAGNITUDE, or a rise while NO
+    field decays, is real divergence."""
+    log = """Time = 0.0002
+
+smoothSolver:  Solving for Ux, Initial residual = 1.0, Final residual = 0.6, No Iterations 1
+GAMG:  Solving for p, Initial residual = 0.0306, Final residual = 0.009, No Iterations 1
+
+Time = 0.0004
+
+smoothSolver:  Solving for Ux, Initial residual = 0.6, Final residual = 0.3, No Iterations 1
+GAMG:  Solving for p, Initial residual = 0.184, Final residual = 0.01, No Iterations 1
+
+Time = 0.0006
+
+smoothSolver:  Solving for Ux, Initial residual = 0.36, Final residual = 0.18, No Iterations 1
+GAMG:  Solving for p, Initial residual = 0.121, Final residual = 0.009, No Iterations 1
+
+Time = 0.0008
+
+smoothSolver:  Solving for Ux, Initial residual = 0.27, Final residual = 0.12, No Iterations 1
+GAMG:  Solving for p, Initial residual = 0.134, Final residual = 0.008, No Iterations 1
+
+Time = 0.0010
+
+smoothSolver:  Solving for Ux, Initial residual = 0.18, Final residual = 0.08, No Iterations 1
+GAMG:  Solving for p, Initial residual = 0.141, Final residual = 0.008, No Iterations 1
+"""
+    steps, n = parse_residuals(log)
+    pred = predict_from_residuals(steps, n)
+    assert pred.prediction == "WARN"
+    assert any("rising but small" in t for t in pred.trend_line)
+
+
+def test_predictor_rising_large_residual_is_fail():
+    """A rise to a substantial magnitude (peak >= RISING_MAGNITUDE) is real
+    divergence — the boundary between the small coupling transient above and a
+    solver that is actually going unstable."""
+    log = """Time = 0.0002
+
+GAMG:  Solving for p, Initial residual = 0.4, Final residual = 0.1, No Iterations 50
+
+Time = 0.0004
+
+GAMG:  Solving for p, Initial residual = 0.55, Final residual = 0.2, No Iterations 50
+
+Time = 0.0006
+
+GAMG:  Solving for p, Initial residual = 0.72, Final residual = 0.3, No Iterations 50
+
+Time = 0.0008
+
+GAMG:  Solving for p, Initial residual = 0.89, Final residual = 0.4, No Iterations 50
+
+Time = 0.0010
+
+GAMG:  Solving for p, Initial residual = 0.99, Final residual = 0.5, No Iterations 50
+"""
+    steps, n = parse_residuals(log)
+    pred = predict_from_residuals(steps, n)
+    assert pred.prediction == "FAIL"
+    assert any("RISING" in t for t in pred.trend_line)
 
 
 if __name__ == "__main__":

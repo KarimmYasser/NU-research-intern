@@ -78,6 +78,12 @@ When to use custom_fv_solution (relaxationFactors):
 - Mildly coupled compressible SIMPLE: p~0.3, U~0.5, h~0.5
 - Incompressible channel/duct: p~0.3, U~0.7
 
+IMPORTANT — transient compressible flow (fluid module, solver_mode=transient):
+DO NOT write a custom_fv_solution. The standard preset already renders a valid
+PIMPLE loop, the energy (h) solver, and rho relaxation for this case. Omit
+custom_fv_solution entirely; a hand-written body almost always drops the PIMPLE
+sub-dict or the h solver entry and fails startup with "keyword ... is undefined".
+
 When to use turbulence_model:
 - Strong adverse pressure gradient or separation: kOmegaSST
 - External aerodynamics / thin boundary layer: SpalartAllmaras

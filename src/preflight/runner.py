@@ -108,9 +108,13 @@ def _bounded_foamrun(case_dir: Path, agent: ValidationAgent, steps: int):
     """Patch controlDict's endTime to `startTime + steps*deltaT` and run the
     solver, restoring the original controlDict afterwards.
 
-    `writeControl` is set to `none` so the dry run doesn't litter time
-    directories in the case; the original file is restored in a finally block
-    regardless of whether the run crashes, diverges, or times out.
+    Writes are suppressed by setting a `writeInterval` far beyond the dry-run
+    horizon (v13 no longer accepts `writeControl none` — the enum is
+    timeStep/runTime/adjustableRunTime/clockTime/cpuTime — and `none` made the
+    solver die with a FATAL IO ERROR before the first step, which the dry-run
+    predictor then misread as "no Time steps"). The original file is restored in
+    a finally block regardless of whether the run crashes, diverges, or times
+    out.
     """
     control = case_dir / "system" / "controlDict"
     original = control.read_text(encoding="utf-8") if control.is_file() else None
@@ -124,7 +128,10 @@ def _bounded_foamrun(case_dir: Path, agent: ValidationAgent, steps: int):
         start = float(start_m.group(1)) if start_m else 0.0
         new_end = start + steps * delta
         patched = re.sub(r"^\s*endTime\s+[-\d.eE+]+;", f"endTime         {new_end:g};", original, count=1, flags=re.M)
-        patched = re.sub(r"^\s*writeControl\s+\S+;", "writeControl   none;", patched, count=1, flags=re.M)
+        # Keep a valid writeControl and push writeInterval past the dry-run
+        # horizon so no time directories are written.
+        patched = re.sub(r"^\s*writeControl\s+\S+;", "writeControl   timeStep;", patched, count=1, flags=re.M)
+        patched = re.sub(r"^\s*writeInterval\s+[-\d.eE+]+;", f"writeInterval  {steps * 1000000:d};", patched, count=1, flags=re.M)
         control.write_text(patched, encoding="utf-8")
         return agent.run_solver(case_dir)
     finally:

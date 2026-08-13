@@ -144,6 +144,7 @@ NumericsPreset = Literal[
     "incompressibleFluid_limitedLinear",  # 2nd-order bounded, transient incompressible
     "incompressibleFluid_upwind",  # 1st-order upwind, robust (steady/incompressible)
     "compressibleFluid_steadyState",  # steady-state SIMPLE (compressible)
+    "compressibleFluid_transient",  # transient PIMPLE (compressible, Euler ddt)
     "incompressibleVoF",  # transient free-surface (interface compression, alpha solver)
     "compressibleVoF",  # transient compressible free-surface (per-phase alpha thermodynamics)
 ]

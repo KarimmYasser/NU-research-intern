@@ -123,7 +123,24 @@ def test_grounded_mesh_patch_extraction(tmp_path):
     assert len(cyclic_patches) == 2
 
 
+def test_vortex_tube_transient_numerics():
+    intent = vortex_tube_intent()
+    intent.solver_mode = "transient"
+    spec = intent_to_spec(intent)
+    case = render(spec)
+
+    assert spec.numerics == "compressibleFluid_transient"
+    schemes = case.system["fvSchemes"]
+    assert "Euler" in schemes
+    assert "steadyState" not in schemes
+    sol = case.system["fvSolution"]
+    assert "PIMPLE" in sol
+    assert "nOuterCorrectors 2" in sol
+    assert "rho        0.05" in sol
+
+
 if __name__ == "__main__":
     test_vortex_tube_intent_to_spec()
     test_vortex_tube_rendering()
+    test_vortex_tube_transient_numerics()
     print("All vortex tube tests passed!")

@@ -298,6 +298,8 @@ PIMPLE
 {
     nNonOrthogonalCorrectors 0;
     nCorrectors     3;
+    pRefCell        0;
+    pRefValue       0;
 }
 
 """
@@ -462,6 +464,59 @@ relaxationFactors
 
 """
 
+# Compressible transient preset (grounded in v13 fluid/shockTube: Euler ddt,
+# PIMPLE loop). Used whenever a compressible case is not steady — the fluid
+# module's PIMPLE (PISO-SIMPLE) control reads this dict by name.
+_FVSCHEMES_COMPRESSIBLE_TRANSIENT = """
+ddtSchemes
+{
+    default         Euler;
+}
+
+gradSchemes
+{
+    default         Gauss linear;
+    grad(k)         cellMDLimited Gauss linear 1;
+    grad(U)         cellMDLimited Gauss linear 1;
+    grad(h)         cellMDLimited Gauss linear 1;
+    grad(e)         cellMDLimited Gauss linear 1;
+}
+
+divSchemes
+{
+    default         none;
+
+    div(phi,U)      Gauss limitedLinear 1;
+    div(phi,h)      Gauss limitedLinear 1;
+    div(phi,e)      Gauss limitedLinear 1;
+
+    div(phi,k)       Gauss limitedLinear01 1;
+    div(phi,epsilon) Gauss limitedLinear01 1;
+    div(phi,omega)   Gauss limitedLinear01 1;
+
+    div(phi,K)      Gauss linear;
+    div(phi,Ekp)    Gauss linear;
+    div(R)          Gauss linear;
+    div(((rho*nuEff)*dev2(T(grad(U))))) Gauss linear;
+}
+
+laplacianSchemes
+{
+    default         Gauss linear corrected;
+}
+
+interpolationSchemes
+{
+    default         linear;
+}
+
+snGradSchemes
+{
+    default         corrected;
+}
+
+"""
+
 # Compressible VoF preset (grounded in v13 compressibleVoF/damBreak).
 _FVSCHEMES_COMPRESSIBLE_VOF = """
 ddtSchemes
@@ -564,6 +619,8 @@ PIMPLE
     nOuterCorrectors    1;
     nCorrectors         3;
     nNonOrthogonalCorrectors 0;
+    pRefPoint           (0 0 0);
+    pRefValue           0;
 }
 
 relaxationFactors
@@ -647,10 +704,85 @@ relaxationFactors
 
 """
 
+# Compressible transient preset: same solvers, PIMPLE loop with outer
+# corrections + relaxation for stability on a transient compressible run.
+_FVSOLUTION_COMPRESSIBLE_TRANSIENT = """
+solvers
+{
+    "rho.*"
+    {
+        solver          PCG;
+        preconditioner  DIC;
+        tolerance       0;
+        relTol          0;
+    }
+
+    p
+    {
+        solver          GAMG;
+        smoother        GaussSeidel;
+        tolerance       1e-06;
+        relTol          0.01;
+        maxIter         50;
+        cacheAgglomeration true;
+        nCellsInCoarsestLevel 1000;
+        agglomerator    faceAreaPair;
+        mergeLevels     1;
+    }
+
+    pFinal
+    {
+        $p;
+        relTol          0.01;
+    }
+
+    "(U|h|e|k|epsilon|R)"
+    {
+        solver          PBiCGStab;
+        preconditioner  DILU;
+        tolerance       1e-06;
+        relTol          0.01;
+    }
+
+    "(U|h|e|k|epsilon|R)Final"
+    {
+        $U;
+        relTol          0;
+    }
+}
+
+PIMPLE
+{
+    momentumPredictor yes;
+    nOuterCorrectors 2;
+    nCorrectors     1;
+    nNonOrthogonalCorrectors 0;
+}
+
+relaxationFactors
+{
+    fields
+    {
+        p          0.7;
+        rho        0.05;
+    }
+    equations
+    {
+        U               0.7;
+        T               0.7;
+        k               0.7;
+        epsilon         0.7;
+        h               0.7;
+    }
+}
+
+"""
+
 _FVSCHEMES = {
     "incompressibleFluid_limitedLinear": _FVSCHEMES_BODY,
     "incompressibleFluid_upwind": _FVSCHEMES_UPWIND,
     "compressibleFluid_steadyState": _FVSCHEMES_COMPRESSIBLE_STEADY,
+    "compressibleFluid_transient": _FVSCHEMES_COMPRESSIBLE_TRANSIENT,
     "incompressibleVoF": _FVSCHEMES_INCOMPRESSIBLE_VOF,
     "compressibleVoF": _FVSCHEMES_COMPRESSIBLE_VOF,
 }
@@ -658,6 +790,7 @@ _FVSOLUTION = {
     "incompressibleFluid_limitedLinear": _FVSOLUTION_BODY,
     "incompressibleFluid_upwind": _FVSOLUTION_UPWIND,
     "compressibleFluid_steadyState": _FVSOLUTION_COMPRESSIBLE_STEADY,
+    "compressibleFluid_transient": _FVSOLUTION_COMPRESSIBLE_TRANSIENT,
     "incompressibleVoF": _FVSOLUTION_INCOMPRESSIBLE_VOF,
     "compressibleVoF": _FVSOLUTION_COMPRESSIBLE_VOF,
 }
@@ -939,6 +1072,18 @@ def render_dynamicmeshdict(spec: CaseSpec) -> str:
 
 def render_field(field: Field, patches: list[Patch]) -> str:
     dims = "[" + " ".join(str(d) for d in field.dimensions) + "]"
+    # Wall-function BCs (kqRWallFunction, epsilonWallFunction, nutkWallFunction,
+    # alphatJayatillekeWallFunction, ...) require a `value` entry, and OpenFOAM
+    # v13 tutorials supply one. Rather than forcing a weak local LLM to guess
+    # that number ("reason free, constrain late"), the renderer defaults it to
+    # the field's own internal value — a safe, valid starting guess that the
+    # wall function corrects during the solve.
+    _WALL_FUNCTIONS = {
+        "kqRWallFunction", "epsilonWallFunction", "omegaWallFunction",
+        "nutkWallFunction", "nutUSpaldingWallFunction", "nutUWallFunction",
+        "alphatJayatillekeWallFunction", "alphatWallFunction",
+        "v2WallFunction", "kLowReWallFunction",
+    }
     bf_parts = []
     for p in patches:
         bc = p.bc.get(field.name)
@@ -951,6 +1096,8 @@ def render_field(field: Field, patches: list[Patch]) -> str:
                     inner_lines.append(f"        {k:<15} {v};")
         if bc.value is not None:
             inner_lines.append(f"        value           {bc.value};")
+        elif bc.type in _WALL_FUNCTIONS:
+            inner_lines.append(f"        value           {field.internal_field};")
         inner = "\n".join(inner_lines)
         bf_parts.append(f"    {p.name}\n    {{\n{inner}\n    }}")
     boundary = "\n\n".join(bf_parts)

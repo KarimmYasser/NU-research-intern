@@ -18,6 +18,7 @@ docs/progress/progress-log.md), so each finding maps to a known root cause:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,7 +53,10 @@ def audit_case(case_dir: Path) -> list[AuditFinding]:
     fvsolution = _read_dir(system / "fvSolution")
 
     solver = (entries(control).get("solver") if control else None) or "?"
-    compressible = (constant / "thermophysicalProperties").is_file() or "fluid" in solver
+    # v13 compressible families carry the thermo dict inside constant/physicalProperties
+    # (thermoType block) — the old OpenFOAM-9 thermophysicalProperties name is legacy.
+    phys = _read_dir(constant / "physicalProperties")
+    compressible = "fluid" in solver or "thermoType" in phys
 
     # 1. controlDict: solver + basic time integrity
     if not control:
@@ -134,6 +138,7 @@ def _check_fvsolution(fv: str, compressible: bool, ddt_default: str | None,
                                      "fvSolution has no solvers block"))
     else:
         findings.append(AuditFinding("solvers_block", "pass", "fvSolution.solvers present"))
+        _check_solver_entries(solvers, findings)
 
     loop = None
     for name in ("PIMPLE", "SIMPLE", "PISO"):
@@ -145,7 +150,26 @@ def _check_fvsolution(fv: str, compressible: bool, ddt_default: str | None,
                                      "fvSolution has no PIMPLE/SIMPLE/PISO block — "
                                      "the solution algorithm is undefined"))
     else:
-        findings.append(AuditFinding("loop_block", "pass", f"fvSolution.{loop} present"))
+        # The v13 solver *modules* (incompressibleFluid / fluid) look up their
+        # control dict by algorithm name: PIMPLE in transient mode, SIMPLE in
+        # steady mode (pimpleSingleRegionControl selects on
+        # mesh().schemes().steady()). A loop block that contradicts the ddt
+        # scheme fails at startup with "keyword PIMPLE is undefined in
+        # dictionary fvSolution" (seen live: a transient Euler cavity whose
+        # LLM override had emitted a SIMPLE-only fvSolution).
+        expected = "SIMPLE" if ddt_default == "steadyState" else "PIMPLE"
+        if loop == expected:
+            findings.append(AuditFinding("loop_block", "pass",
+                                         f"fvSolution.{loop} present (matches {ddt_default or '?'} ddt)"))
+        elif expected == "PIMPLE" and loop == "PISO":
+            # PISO is the transient incompressible alternative — accepted.
+            findings.append(AuditFinding("loop_block", "pass",
+                                         f"fvSolution.{loop} present (transient PISO)"))
+        else:
+            findings.append(AuditFinding("loop_block_mismatch", "fail",
+                                         f"fvSolution uses {loop} but ddtSchemes.default='{ddt_default}' "
+                                         f"needs {expected} — the v13 solver module reads {expected} "
+                                         "and fails with 'keyword ... is undefined'"))
 
     relax = section(fv, "relaxationFactors")
     if relax is None:
@@ -195,6 +219,34 @@ def _check_fvsolution(fv: str, compressible: bool, ddt_default: str | None,
                                          "compressible energy-field solver entry present"))
 
 
+def _check_solver_entries(solvers: str, findings: list[AuditFinding]) -> None:
+    """Every linear-solver entry must carry the keys its solver type requires.
+
+    GAMG needs `smoother`; PCG/PBiCGStab/PBiCG need `preconditioner`; smoothSolver
+    needs `smoother`. A missing key is a DICTIONARY_SYNTAX error caught live in the
+    Docker ladder (`keyword smoother is undefined in dictionary solvers/h`).
+    """
+    from .ofdict import entries as _entries, sub_blocks
+    bad: list[str] = []
+    for name, body in sub_blocks(solvers):
+        e = _entries(body)
+        kind = e.get("solver", "").strip()
+        need = {"GAMG": "smoother",
+                "PCG": "preconditioner",
+                "PBiCG": "preconditioner",
+                "PBiCGStab": "preconditioner",
+                "smoothSolver": "smoother"}.get(kind)
+        if need and not e.get(need):
+            bad.append(f"{name} ({kind})")
+    if bad:
+        findings.append(AuditFinding("incomplete_solver_entries", "fail",
+                                     f"solvers entries missing required keys: "
+                                     f"{', '.join(bad)}"))
+    else:
+        findings.append(AuditFinding("solver_entries", "pass",
+                                     "solver entries carry their required keys"))
+
+
 def _check_internal_fields(zero: Path, compressible: bool,
                            findings: list[AuditFinding]) -> None:
     if not zero.is_dir():
@@ -203,6 +255,10 @@ def _check_internal_fields(zero: Path, compressible: bool,
     from .ofdict import strip_comments
     # Solved scalar fields whose internalField must be strictly positive for the
     # solver to start (and stay bounded): p=0 is only fine for incompressible.
+    # `nut` and `alphat` are *derived* fields (computed from k/epsilon via wall
+    # functions), and the v13 tutorials legitimately start them at `uniform 0`
+    # (e.g. fluid/cavity/0/nut), so they must NOT be positivity-flagged.
+    _POSITIVE_SOLVED = {"p", "T", "k", "epsilon", "omega", "h", "e", "nuTilda"}
     for field_file in sorted(zero.glob("*")):
         if not field_file.is_file():
             continue
@@ -210,7 +266,7 @@ def _check_internal_fields(zero: Path, compressible: bool,
         text = strip_comments(_read_dir(field_file))
         raw = _top_level_internal_field(text)
         val = finite_value(raw or "")
-        if name not in ("p", "T", "k", "epsilon", "omega", "h", "e", "alphat", "nuTilda", "nut"):
+        if name not in _POSITIVE_SOLVED:
             continue
         if name == "p" and not compressible:
             continue  # gauge pressure: any finite value is fine
@@ -313,17 +369,18 @@ def _mesh_patch_names(boundary_path: Path) -> list[str]:
 
 
 def _check_thermo_properties(constant: Path, findings: list[AuditFinding]) -> None:
-    tp = constant / "thermophysicalProperties"
+    tp = constant / "physicalProperties"
     if not tp.is_file():
         findings.append(AuditFinding("missing_thermo", "fail",
-                                     "compressible: constant/thermophysicalProperties missing"))
+                                     "compressible: constant/physicalProperties missing"))
         return
     text = tp.read_text(encoding="utf-8", errors="replace")
-    # rho is under mixture; the file's bottom has `rho rho;` default. Presence of
-    # the file plus a positive Cp/Mw near the top is the practical sanity check.
-    if "perfectGas" not in text and "rhoConst" not in text and "pureMixture" not in text:
+    # v13 compressible physicalProperties has a thermoType block; the old
+    # thermophysicalProperties file name is the OpenFOAM-9 convention.
+    if "thermoType" not in text:
         findings.append(AuditFinding("thermo_unrecognized", "warn",
-                                     "thermophysicalProperties structure unrecognized by audit"))
+                                     "physicalProperties has no thermoType block "
+                                     "(v13 compressible expects one)"))
         return
     mw = finite_value(next((v for k, v in entries(section(text, "mixture") or "").items()
                             if "molWeight" in k or "molweight" in k), None))

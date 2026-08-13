@@ -562,7 +562,7 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
     if name == "incompressibleFluid":
         numerics = "incompressibleFluid_upwind" if steady else "incompressibleFluid_limitedLinear"
     elif name == "fluid":
-        numerics = "compressibleFluid_steadyState"
+        numerics = "compressibleFluid_steadyState" if steady else "compressibleFluid_transient"
     else:
         numerics = def_.default_numerics
 

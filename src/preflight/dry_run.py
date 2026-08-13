@@ -33,6 +33,15 @@ _TIME_RE = re.compile(r"^\s*Time\s*=\s*(?P<t>\S+)", re.M)
 DECAY_SLOPE = -0.05  # log10-units per step
 RISE_SLOPE = 0.05
 CONVERGED_ABS = 1e-6  # residual already at machine floor -> pass regardless of slope
+# A rising residual only means *divergence* when it is rising at a substantial
+# magnitude. Incompressible pressure-coupling transients (pseudo-transient
+# runs starting from a near-uniform field) routinely see p's initial residual
+# drift up from ~0.03 while staying small and then plateau — the solver is
+# still converging each step (Final residuals are small). A 5-step dry run can
+# not tell a modest rise from a real instability, so it must not FAIL a case
+# whose residuals never reach a significant level. A genuine divergence (RHVT
+# first-solve NaN, residual order 1 rising toward inf) clears the bar.
+RISING_MAGNITUDE = 0.5  # peak initial residual above which a rise is real divergence
 
 
 @dataclass
@@ -108,25 +117,48 @@ def predict_from_residuals(steps: list[dict[str, float]], n_steps: int) -> DryRu
     trend_lines: list[str] = []
     worst = "PASS"
     last_field_rise = 0
-    for field, series in sorted(fields_series.items()):
-        # drop non-finite entries guard: already handled above; just drop gaps
-        series = [v for v in series if math.isfinite(v)]
+    # A rise in one field only reads as a *coupling transient* (not divergence)
+    # when at least one other field is genuinely decaying — i.e. the solver is
+    # otherwise converging and this field is just settling into its coupled
+    # position (seen live: the cavity's p residual drifting 0.03 -> 0.2 while
+    # Ux/Uy decay). If NO field is decaying, every rise is the leading edge of
+    # an instability, even at modest magnitude.
+    slopes: dict[str, float] = {}
+    peaks: dict[str, float] = {}
+    series_map: dict[str, list[float]] = {}
+    for field, series in fields_series.items():
+        clean = [v for v in series if math.isfinite(v)]
+        series_map[field] = clean
+        if len(clean) >= 2:
+            slopes[field] = _log_slope(clean)
+            peaks[field] = max(clean)
+    any_decaying = any(slopes.get(f, 0.0) <= DECAY_SLOPE for f in fields_series)
+
+    for field, series in sorted(series_map.items()):
         if len(series) < 2:
             trend_lines.append(f"{field}: {len(series)} data point(s) — insufficient to judge")
             worst = "WARN" if worst == "PASS" else worst
             continue
-        slope = _log_slope(series)
+        slope = slopes[field]
         trailing = f" -> ".join(f"{v:.3g}" for v in series)
         # Already at the machine floor: converged, flat is fine.
         if series[-1] <= CONVERGED_ABS:
             trend_lines.append(f"{field}: converged ({trailing}) — OK")
             continue
-        # Fail: sustained rise (≥3 consecutive), OR monotone rise across every
-        # captured step with meaningful overall growth (>5%).
+        # Fail: a rise to a substantial magnitude is unambiguous divergence.
+        # A rise at modest magnitude is only diverging when NOTHING else is
+        # converging; otherwise it is the pressure-coupling start-up transient
+        # (cavity live run) and is downgraded to WARN so the source-of-truth
+        # ladder gets to decide instead of wasting a build_intent retry.
         if slope >= RISE_SLOPE:
-            trend_lines.append(f"{field}: RISING (log-slope +{slope:.2f}/step, {trailing}) — divergence predicted")
-            worst = "FAIL"
-            last_field_rise += 1
+            peak = peaks[field]
+            if peak >= RISING_MAGNITUDE or not any_decaying:
+                trend_lines.append(f"{field}: RISING (log-slope +{slope:.2f}/step, peak {peak:.3g}, {trailing}) — divergence predicted")
+                worst = "FAIL"
+                last_field_rise += 1
+            else:
+                trend_lines.append(f"{field}: rising but small (log-slope +{slope:.2f}/step, peak {peak:.3g}) — coupling transient, not yet diverging")
+                worst = "WARN" if worst == "PASS" else worst
         elif slope <= DECAY_SLOPE:
             trend_lines.append(f"{field}: decaying (log-slope {slope:.2f}/step, {trailing}) — OK")
         else:
@@ -134,9 +166,11 @@ def predict_from_residuals(steps: list[dict[str, float]], n_steps: int) -> DryRu
             worst = "WARN" if worst == "PASS" else worst
 
     if worst == "FAIL":
-        msg = f"{last_field_rise} field(s) on a rising residual trajectory (log-slope ≥ +{RISE_SLOPE:g}/step)"
+        msg = (f"{last_field_rise} field(s) on a rising residual trajectory "
+               f"(log-slope ≥ +{RISE_SLOPE:g}/step, peak ≥ {RISING_MAGNITUDE:g}, "
+               f"or no field decaying)" )
     elif worst == "WARN":
-        msg = "fields not yet converging but no field is rising — flat/stalled or insufficient data"
+        msg = "fields not yet converging but no field is diverging — flat/stalled, insufficient data, or a small coupling transient"
     else:
         msg = "all fields' initial residuals decay (or have converged) across steps"
     return DryRunPrediction(worst, n_steps, fields=fields_series,
