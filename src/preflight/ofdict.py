@@ -149,7 +149,7 @@ def keys(text: str | None) -> list[str]:
     return out
 
 
-def numbered_value(raw: str) -> float | None:
+def numbered_value(raw: str | None) -> float | None:
     """Extract the first number from an OpenFOAM value like `uniform 101325` or
     `(1 0 0)` or `3.5e-05`. Returns None if no number is present."""
     if not raw:
@@ -158,9 +158,11 @@ def numbered_value(raw: str) -> float | None:
     return float(m.group()) if m else None
 
 
-def finite_value(raw: str) -> float | None:
+def finite_value(raw: str | None) -> float | None:
     """Same as numbered_value but rejects nan/inf spellings so positivity checks
     treat them as unusable rather than infinitely-bad."""
+    if not raw:
+        return None
     v = numbered_value(raw)
     if v is None:
         return None

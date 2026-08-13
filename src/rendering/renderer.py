@@ -1115,6 +1115,18 @@ def render_field(field: Field, patches: list[Patch]) -> str:
 def render_setfieldsdict(spec: CaseSpec) -> str:
     """Render a default setFieldsDict for VoF phase fraction initialization."""
     phase = spec.phases[0] if spec.phases else "water"
+    if isinstance(spec.geometry, BoxGeometry):
+        x_min, x_max = spec.geometry.x
+        y_min, y_max = spec.geometry.y
+        z_min, z_max = spec.geometry.z
+        # Half-fill the domain along y-axis (typical for dam break / sloshing initializations)
+        y_mid = y_min + 0.5 * (y_max - y_min)
+        box_min = f"({_num(x_min)} {_num(y_min)} {_num(z_min)})"
+        box_max = f"({_num(x_max)} {_num(y_mid)} {_num(z_max)})"
+    else:
+        box_min = "(0 0 0)"
+        box_max = "(1 1 1)"
+
     body = (
         "defaultFieldValues\n"
         "(\n"
@@ -1124,7 +1136,7 @@ def render_setfieldsdict(spec: CaseSpec) -> str:
         "(\n"
         "    boxToCell\n"
         "    {\n"
-        "        box (0 0 0) (1 1 1);\n"
+        f"        box {box_min} {box_max};\n"
         "        fieldValues\n"
         "        (\n"
         f"            volScalarFieldValue alpha.{phase} 1\n"
