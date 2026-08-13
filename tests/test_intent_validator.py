@@ -75,7 +75,7 @@ def test_valid_turbulence_model(validator):
 def test_valid_relaxation_factors(validator):
     fv_solution = """
 SIMPLE { nNonOrthogonalCorrectors 1; }
-relaxationFactors { fields { p 0.3; } equations { U 0.7; } }
+relaxationFactors { fields { p 0.3; rho 0.05; } equations { U 0.7; } }
 """
     intent = _make_simple_intent(custom_fv_solution=fv_solution)
     errors = validator.validate(intent)

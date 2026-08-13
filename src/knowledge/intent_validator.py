@@ -320,6 +320,7 @@ class IntentValidator:
             # the energy-solver entry this check enforces.
             if flow_type == "compressible":
                 case_type = "fluid"
+        compressible = (flow_type == "compressible")
         body = getattr(intent, "custom_fv_solution", "") or ""
         if case_type != "fluid":
             return []
@@ -399,20 +400,39 @@ class IntentValidator:
                         message=f"Invalid GAMG agglomerator '{ag}'. Valid choices: {sorted(valid_agglomerators)}."
                     )]
 
-        # Macro reference check: $U; when U is not explicitly defined in solvers block
-        if re.search(r"^\s*\$U\s*;", body, re.M):
-            solvers_block = re.search(r"solvers\s*\{([^}]+)\}", body, re.DOTALL)
-            if solvers_block:
-                sb_text = solvers_block.group(1)
-                if not re.search(r"^\s*\"?U\"?\s*\{", sb_text, re.M):
+        # Outer braces check
+        if body.strip().startswith("{") and body.strip().endswith("}"):
+            return [IntentValidationError(
+                field=path,
+                message="custom_fv_solution body must not be wrapped in extra outer braces '{ ... }'."
+            )]
+
+        # Compressible density (rho) relaxation check (only when fields sub-dict is explicitly provided)
+        if compressible:
+            fields_match = re.search(r"fields\s*\{([^}]+)\}", body)
+            if fields_match:
+                f_body = fields_match.group(1)
+                if not re.search(r"\brho\b", f_body):
                     return [IntentValidationError(
                         field=path,
                         message=(
-                            "fvSolution references macro '$U;' but no explicit solver block 'U' exists in `solvers`. "
-                            "When using regex solver blocks like '\"(U|h|e|k|epsilon|R)\"', use '$\"(U|h|e|k|epsilon|R)\";' "
-                            "to inherit settings."
+                            "Custom fvSolution `relaxationFactors.fields` block for compressible flow must include "
+                            "a density relaxation factor 'rho' (e.g. 'rho 0.05;') to absorb pressure-density "
+                            "coupling shocks, or omit custom_fv_solution to use the standard preset."
                         )
                     )]
+
+        # GAMG nCellsInCoarsestLevel minimum threshold check
+        for match in re.finditer(r"\bnCellsInCoarsestLevel\s+([\d]+)", body):
+            val = int(match.group(1))
+            if val < 500:
+                return [IntentValidationError(
+                    field=path,
+                    message=(
+                        f"GAMG parameter `nCellsInCoarsestLevel` value ({val}) is too small for complex/high-speed "
+                        "flows (must be >= 500, recommended 1000) to prevent multigrid coarsening divergence."
+                    )
+                )]
 
         return []
 
