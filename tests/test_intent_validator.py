@@ -313,3 +313,77 @@ def test_valid_patch_names_pass(validator):
     )
     errors = validator.validate(intent, known_patches=known)
     assert errors == [], f"Valid patch names reported errors: {errors}"
+
+
+# ─── Fluid case: mandatory PIMPLE/SIMPLE block ────────────────────────────────
+
+def test_fluid_custom_fv_solution_requires_solver_control_block(validator):
+    """Compressible `fluid` fvSolution must carry PIMPLE (transient) / SIMPLE
+    (steady) — the module reads it at startup; catch before Docker."""
+    fv = "solvers { p { solver GAMG; } \"(U|h|e|k|epsilon|R)\" { solver PBiCGStab; } } relaxationFactors { equations { U 0.5; } }"
+    intent = _make_simple_intent(case_type="fluid", solver_mode="transient",
+                                 custom_fv_solution=fv)
+    errors = validator.validate(intent)
+    assert any("PIMPLE" in str(e) for e in errors), f"Missing PIMPLE not caught: {errors}"
+
+
+def test_fluid_steady_fv_solution_requires_simple_block(validator):
+    fv = "solvers { p { solver GAMG; } \"(U|h|e|k|epsilon|R)\" { solver PBiCGStab; } } PIMPLE { nCorrectors 2; }"
+    intent = _make_simple_intent(case_type="fluid", solver_mode="steadyState",
+                                 custom_fv_solution=fv)
+    errors = validator.validate(intent)
+    assert any("SIMPLE" in str(e) for e in errors), f"Missing SIMPLE not caught: {errors}"
+
+
+def test_fluid_custom_fv_solution_with_block_passes(validator):
+    fv = ('solvers { p { solver GAMG; } "(U|h|e|k|epsilon|R)" { solver PBiCGStab; } } '
+          'PIMPLE { nCorrectors 2; } relaxationFactors { equations { U 0.5; } }')
+    intent = _make_simple_intent(case_type="fluid", solver_mode="transient",
+                                 custom_fv_solution=fv)
+    errors = validator.validate(intent)
+    assert errors == [], f"Valid fluid fvSolution reported errors: {errors}"
+
+
+def test_incompressible_custom_fv_solution_not_forced_to_pimple(validator):
+    """Only compressible `fluid` demands the solver-control block."""
+    fv = "solvers { p { solver PCG; } } PIMPLE { nCorrectors 2; }"
+    intent = _make_simple_intent(case_type="incompressibleFluid",
+                                 custom_fv_solution=fv)
+    errors = validator.validate(intent)
+    assert not any("PIMPLE" in str(e) for e in errors)
+
+
+# ─── Fluid case: energy-field solver entry ────────────────────────────────────
+
+def test_fluid_custom_fv_solution_requires_energy_solver(validator):
+    """The `fluid` module reads solvers/h at startup; a hand-written `solvers`
+    block listing only p/U/k/epsilon (typical of LLM output) must be rejected
+    here, not on the Docker ladder."""
+    fv = "solvers { p { solver GAMG; } U { solver PBiCGStab; } k { solver PBiCGStab; } epsilon { solver PBiCGStab; } } PIMPLE { nCorrectors 2; }"
+    intent = _make_simple_intent(case_type="fluid", solver_mode="transient",
+                                 custom_fv_solution=fv)
+    errors = validator.validate(intent)
+    assert any("energy field" in str(e) or "solvers/h" in str(e) for e in errors), \
+        f"Missing energy solver not caught: {errors}"
+    # regex entry covering h/e is accepted
+    fv2 = 'solvers { p { solver GAMG; } "(U|h|e|k|epsilon|R)" { solver PBiCGStab; } } PIMPLE { nCorrectors 2; }'
+    intent2 = _make_simple_intent(case_type="fluid", solver_mode="transient",
+                                  custom_fv_solution=fv2)
+    errs2 = validator.validate(intent2)
+    assert not any("energy field" in str(e) for e in errs2), f"Regex h/e entry rejected: {errs2}"
+
+
+def test_compressible_flow_type_maps_to_fluid_for_solver_control(validator):
+    """flow_type=compressible with default case_type must resolve to the `fluid`
+    family so the PIMPLE/energy-solver checks fire (mirrors _resolve_case_type)."""
+    fv = "solvers { p { solver GAMG; } U { solver PBiCGStab; } k { solver PBiCGStab; } epsilon { solver PBiCGStab; } }"
+    intent = _make_simple_intent(solver_mode="transient", custom_fv_solution=fv)
+    errors = validator.validate(intent)
+    assert any("PIMPLE" in str(e) for e in errors), f"Resolved case_type=fluid not enforced: {errors}"
+
+    # With the solver-control block present but energy solver still missing, the
+    # energy check must fire for the same resolved-to-fluid intent.
+    fv2 = "solvers { p { solver GAMG; } U { solver PBiCGStab; } k { solver PBiCGStab; } epsilon { solver PBiCGStab; } } PIMPLE { nCorrectors 2; }"
+    intent2 = _make_simple_intent(solver_mode="transient", custom_fv_solution=fv2)
+    errs2 = validator.validate(intent2)
+    assert any("energy field" in str(e) for e in errs2), f"Energy check not fired: {errs2}"

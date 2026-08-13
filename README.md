@@ -19,7 +19,7 @@ See `CLAUDE.md` for full project context (objectives, phases, KPIs) intended to 
   - `architecture/` — the Phase II engineering plan (structured-IR + deterministic renderer), framework decision, self-correction loop, and the RL-for-agent-skills research thread
   - `supervision/` — supervisor-meeting prep and open questions
   - `progress/` — session-by-session milestone and findings logs
-  - `guides/` — practical how-to-run guides
+  - `guides/` — how-to guides: an engineer-user guide (no coding), a developer guide (extending), and technical/CLI references
   - `training/` — the Wolf Dynamics OpenFOAM decks and general NU material (PDFs)
 - `src/` — the Phase II architecture spike: a working NL→OpenFOAM-v13 pipeline (structured IR + deterministic renderer, case-type registry for 18 solver families, Docker validation ladder). See `src/README.md`.
 - `temp/` — scratch space (downloaded reference repos, literature-review PDFs, exploratory output). Gitignored — not part of version control. See `CLAUDE.md` for the convention.

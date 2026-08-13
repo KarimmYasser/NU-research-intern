@@ -118,6 +118,9 @@ class IntentValidator:
             errors.extend(
                 self._check_foam_dict_syntax(intent.custom_fv_solution, "custom_fv_solution")
             )
+            errors.extend(
+                self._check_fv_solution_blocks(intent, "custom_fv_solution")
+            )
 
         # 5. Box-geometry face assignment (canonical fallback must not strand a patch)
         errors.extend(self._check_box_geometry(intent))
@@ -253,6 +256,91 @@ class IntentValidator:
                 message=f"Unclosed '{{' — {depth} opening brace(s) have no matching '}}'. Check the dict body."
             )]
         return []
+
+    def _check_fv_solution_blocks(self, intent: CaseIntent, path: str) -> list[IntentValidationError]:
+        """Compressible `fluid` fvSolution bodies must carry the blocks the
+        module reads at runtime.
+
+        The OpenFOAM v13 `fluid` module (compressible) fails at startup with
+        "keyword PIMPLE is undefined in dictionary .../fvSolution" when the
+        transient solution-control sub-dict is missing — which is exactly what
+        a model's hand-written body tends to omit. Catch it here (cheap, no
+        Docker) instead of on the validation ladder.
+        """
+        case_type = getattr(intent, "case_type", "incompressibleFluid")
+        flow_type = getattr(intent, "flow_type", "incompressible")
+        if not case_type or case_type == "incompressibleFluid":
+            # Mirror ir.intent._resolve_case_type: a compressible intent with the
+            # default family maps to the `fluid` module, whose fvSolution needs
+            # the energy-solver entry this check enforces.
+            if flow_type == "compressible":
+                case_type = "fluid"
+        body = getattr(intent, "custom_fv_solution", "") or ""
+        if case_type != "fluid":
+            return []
+        required = "PIMPLE" if getattr(intent, "solver_mode", "transient") != "steadyState" else "SIMPLE"
+        if not re.search(rf"\b{required}\s*{{", body):
+            return [IntentValidationError(
+                field=path,
+                message=(
+                    f"Custom fvSolution for the compressible 'fluid' solver must "
+                    f"include a '{required}' sub-dict (this {getattr(intent, 'solver_mode', 'transient')} "
+                    "solver reads it at startup). Add it or omit custom_fv_solution "
+                    "to use the standard preset."
+                )
+            )]
+
+# The energy field. The `fluid` module solves for enthalpy and looks up
+        # its linear solver in the fvSolution `solvers` sub-dict; a hand-written
+        # `solvers` block that lists U/k/epsilon but omits h dies at startup with
+        # "keyword h is undefined in dictionary .../fvSolution/solvers". Require
+        # an entry that covers it (explicit `h`/`he`, or a pattern like "(U|h|e)").
+        solvers_match = re.search(r"\bsolvers\s*\{", body)
+        if solvers_match:
+            entry_names = self._dict_entry_names(body, body.find("{", solvers_match.start()) + 1)
+            energy_covered = any(
+                re.search(r"\bh\b|\bhe\b|\be\b", name)  # bare keys h/he/e
+                or re.search(r"[|(]h(?:[|)])|[|(]he(?:[|)])|[|(]e(?:[|)])", name)  # patterns like "(U|h|e)"
+                for name in entry_names
+            )
+            if not energy_covered:
+                return [IntentValidationError(
+                    field=path,
+                    message=(
+                        "Custom fvSolution `solvers` block for the compressible "
+                        "'fluid' solver must define a solver for the energy field "
+                        "(h / he / e) — the module reads e.g. solvers/h at startup. "
+                        "Add an explicit solver block for it (or a regex entry like "
+                        '"\\"(U|h|e|k|epsilon|R)\\""), or omit custom_fv_solution to use '
+                        "the standard preset which already covers it."
+                    )
+                )]
+        return []
+
+    @staticmethod
+    def _dict_entry_names(body: str, offset: int) -> list[str]:
+        """Top-level dictionary-entry names inside the braces starting at *offset*.
+
+        Entries are the word (or quoted regex) immediately before a '{' at that
+        brace level. Handles `p { ... }`, `"p.*" { ... }`, `"(U|h|e)" { ... }`,
+        and skips non-block scalars (`U 0.1;`) and nested sub-dicts.
+        """
+        names: list[str] = []
+        tokens = re.findall(r'"([^"]*)"|([^\s"]+)', body[offset:])
+        depth = 0
+        pending = None  # last token seen at depth 0 before a '{'
+        for quoted, bare in tokens:
+            token = quoted or bare
+            if token == "{":
+                depth += 1
+                if depth == 1 and pending is not None:
+                    names.append(pending)
+                    pending = None
+            elif token == "}":
+                depth -= 1
+            elif depth == 0:
+                pending = token
+        return names
 
     def _check_box_geometry(self, intent: CaseIntent) -> list[IntentValidationError]:
         """Box geometry: explicit faces must tile all six faces; the canonical

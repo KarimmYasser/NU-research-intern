@@ -192,6 +192,22 @@ def _extract_json(text: str) -> str:
     return text.strip()
 
 
+def _extract_fenced_json(text: str) -> str:
+    """Isolate the outermost {...} span WITHOUT stripping `//` comments.
+
+    `extract_file_patches` embeds whole OpenFOAM dictionary files (which are
+    full of `//` comment lines and `//` separators) inside the JSON string
+    values. Reusing `_extract_json`'s comment-stripping there corrupts the
+    JSON, so this lighter variant only drops fences and trailing commas.
+    """
+    text = re.sub(r"```(?:json)?", "", text)
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1:
+        text = text[start:end + 1]
+    text = re.sub(r",(\s*[}\]])", r"\1", text)  # tolerate trailing commas
+    return text.strip()
+
+
 def _known_patches_hint(known_patches: list[MeshPatch]) -> str:
     """Format the mesh's real patch names/types so the model must reuse them
     verbatim (geometry="external_mesh") instead of inventing new patch names.
@@ -206,16 +222,19 @@ def _known_patches_hint(known_patches: list[MeshPatch]) -> str:
     return header + lines
 
 
-def _chat_create(client, config: LLMConfig, messages: list[dict]):
+def _chat_create(client, config: LLMConfig, messages: list[dict], response_format: dict | None = None):
     """Call chat.completions.create, tolerating backend quirks:
     - some backends (e.g. reasoning models like gpt-5-mini on the Siemens SDC
       LLM Gateway) reject temperature=0, only accepting the default (1);
     - some backends don't support `response_format=json_schema` at all.
     Tries the strictest combination first, degrading until one is accepted.
+    `response_format` defaults to the intent schema; pass the patch schema
+    (`_PATCH_RESPONSE_FORMAT`) for `extract_file_patches`.
     """
+    rf = response_format or _RESPONSE_FORMAT
     attempts = [
-        {"temperature": 0, "response_format": _RESPONSE_FORMAT},
-        {"response_format": _RESPONSE_FORMAT},
+        {"temperature": 0, "response_format": rf},
+        {"response_format": rf},
         {"temperature": 0},
         {},
     ]
@@ -234,12 +253,16 @@ def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 
                     known_patches: list[MeshPatch] | None = None) -> CaseIntent:
     """NL -> validated CaseIntent with RAG context grounding and Skill enrichment.
 
-    Validation is two-stage (fast inner loop, no Docker):
+    Validation is three-stage (fast inner loop, no Docker):
       1. Pydantic schema validation — types, enums, required fields.
+      1.5 EnvelopeConstraint — clamp LLM-emitted numbers into curated physically
+         plausible ranges (nu, p_ambient, temperature, velocities, pressures,
+         box_size, cells); unit-error outliers are fed back to the LLM.
       2. IntentValidator semantic check — BC types, required BC keys, field
          applicability, turbulence model name, relaxation factor ranges.
-    Both failure modes are fed back to the LLM in the same retry loop.
+    All failure modes are fed back to the LLM in the same retry loop.
     """
+    from knowledge.envelopes import EnvelopeConstraint
     from knowledge.intent_validator import IntentValidator
     config = config or LLMConfig()
     client = make_client(config)
@@ -247,6 +270,7 @@ def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 
     retriever = KnowledgeRetriever()
     rag_context = retriever.format_prompt_context(nl)
     validator = IntentValidator()
+    envelope = EnvelopeConstraint()
 
     user_content = nl + (_known_patches_hint(known_patches) if known_patches else "") + rag_context
     messages = [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": user_content}]
@@ -267,6 +291,28 @@ def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 
                 {"role": "user",
                  "content": f"That was not valid JSON/schema. Error: {last_err}. "
                             "Return only the corrected JSON object."},
+            ]
+            continue
+
+        # Stage 1.5: deterministic physical-envelope constraint. Clamp numbers
+        # into plausible ranges; reject only unit/dimension-level outliers.
+        intent, env_notes, env_errors = envelope.apply(intent)
+        for note in env_notes:
+            print(f"         * constraint: {note}", flush=True)
+        if env_errors:
+            err_lines = "\n".join(f"- {e}" for e in env_errors)
+            last_err = err_lines
+            print(f"      -> [Stage 1.5/2] EnvelopeConstraint FAILED with {len(env_errors)} error(s):", flush=True)
+            for err in env_errors:
+                print(f"         * {err}", flush=True)
+            messages += [
+                {"role": "assistant", "content": raw},
+                {"role": "user",
+                 "content": (
+                     f"Your intent has values outside physically plausible ranges:\n"
+                     f"{err_lines}\n"
+                     "Fix all listed values (mind the units) and return only the corrected JSON object."
+                 )},
             ]
             continue
 
@@ -311,9 +357,9 @@ def extract_file_patches(prompt: str, config: LLMConfig | None = None,
                 {"role": "user", "content": prompt}]
     for _ in range(max_retries):
         try:
-            resp = _chat_create(client, config, messages)
+            resp = _chat_create(client, config, messages, response_format=_PATCH_RESPONSE_FORMAT)
             raw = resp.choices[0].message.content or ""
-            data = json.loads(_extract_json(raw))
+            data = json.loads(_extract_fenced_json(raw))
             overrides = data.get("file_overrides", {})
             if isinstance(overrides, dict) and overrides:
                 return {k: v for k, v in overrides.items() if isinstance(k, str) and isinstance(v, str)}

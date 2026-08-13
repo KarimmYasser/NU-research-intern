@@ -35,11 +35,31 @@ class CaseFiles:
             (case_dir / "system" / name).write_text(content)
 
 
-def apply_file_overrides(case_dir: Path, overrides: dict[str, str]) -> None:
-    """Apply direct file content patches emitted by the agent to target case files."""
+def apply_file_overrides(case_dir: Path, overrides: dict[str, str]) -> list[str]:
+    """Apply direct file content patches emitted by the agent to target case files.
+
+    Patches are whole-file overrides: each key is a case-relative file path whose
+    content replaces the whole file. A nested-key override (e.g. an LLM that
+    expresses a *section* of `system/fvSolution` as `"system/fvSolution/solvers"`)
+    has a parent path that is already an existing file and cannot be made a
+    directory - skip it rather than crash the graph with NotADirectoryError.
+    Returns the list of skipped (rejected) override paths for logging.
+    """
+    skipped: list[str] = []
     for rel_path, content in overrides.items():
         if not rel_path or not content:
             continue
         p = case_dir / rel_path
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content)
+        # A parent that exists as a file means the key is nested below a real
+        # file - not a valid whole-file override in this scheme.
+        parent = p.parent
+        if parent.exists() and not parent.is_dir():
+            skipped.append(rel_path)
+            continue
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        except (NotADirectoryError, OSError):
+            skipped.append(rel_path)
+            continue
+    return skipped

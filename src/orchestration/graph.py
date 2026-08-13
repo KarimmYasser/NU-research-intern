@@ -42,9 +42,12 @@ from ir.intent import CaseIntent, intent_to_spec
 from ir.spec import CaseSpec
 from llm.llm_client import LLMConfig
 from mesh.mesh_io import MeshPatch, copy_polymesh, load_external_mesh
+from preflight import PreflightResult, PreflightVerdict
+from preflight.runner import run_preflight_with_agent
 from rendering.case import CaseFiles, apply_file_overrides
 from rendering.renderer import render
-from validation.validation_agent import FailureClass, ValidationAgent, ValidationResult
+from validation.validation_agent import (DEFAULT_PROCS, FailureClass,
+                                         ValidationAgent, ValidationResult)
 from .pipeline import extract_file_patches, extract_intent
 
 DEFAULT_MAX_ATTEMPTS = 3
@@ -62,11 +65,14 @@ class CaseGraphState(TypedDict, total=False):
     case_files: CaseFiles
     file_overrides: Optional[dict[str, str]]  # direct target file content patches from agent
     validation: ValidationResult
+    preflight: PreflightResult  # Level A/B/C preflight gate result (set by preflight_case)
 
     attempt: int
     patch_attempt: int
     max_attempts: int
     error_feedback: Optional[str]  # last validation failure, fed back to extract_intent
+    intent_error: Optional[str]  # structured error when extract_intent couldn't produce an intent
+    patch_stats: dict[str, int]  # {"attempts": N, "resolved": M} — targeted-patch success tracking
     done: bool
 
 
@@ -132,7 +138,20 @@ def build_intent(state: CaseGraphState) -> dict:
     else:
         print(f"\n[2/5] Querying LLM to build CaseIntent (Attempt {attempt}/{max_attempts})...", flush=True)
     known = state.get("known_patches")
-    intent = extract_intent(nl, state.get("config"), known_patches=known)
+    try:
+        intent = extract_intent(nl, state.get("config"), known_patches=known)
+    except ValueError as exc:
+        # Inner extract_intent loop exhausted (≤3 LLM repair attempts) without
+        # producing a valid CaseIntent. Surfacing a structured failure (rather
+        # than letting the exception crash the graph) lets the router end the
+        # run cleanly instead of wedging on an empty intent.
+        print(f"      -> Intent extraction FAILED: {exc}", flush=True)
+        return {
+            "intent_error": f"Could not extract a valid CaseIntent: {exc}",
+            "attempt": attempt,
+            "patch_attempt": 0,
+            "file_overrides": None,
+        }
     print(f"      -> Extracted intent (flow_type={intent.flow_type}, regime={intent.regime}, species={intent.fluid_species}, turb_model={intent.turbulence_model or 'kEpsilon'})", flush=True)
     if intent.custom_fv_solution:
         print("      -> Agent specified custom fvSolution relaxation/solvers", flush=True)
@@ -173,11 +192,40 @@ def render_case(state: CaseGraphState) -> dict:
 
     file_overrides = state.get("file_overrides")
     if file_overrides:
-        print(f"      -> Applying {len(file_overrides)} file patch overrides...", flush=True)
-        apply_file_overrides(case_dir, file_overrides)
+        skipped = apply_file_overrides(case_dir, file_overrides)
+        if skipped:
+            # A patch whose key nests below an existing file (e.g. an LLM
+            # emitting "system/fvSolution/solvers" instead of the whole-file
+            # "system/fvSolution") cannot be applied as a whole-file override.
+            # Skip rather than crash; the failing validation re-runs and re-feeds
+            # the error if the case is still broken.
+            print(f"      -> skipped {len(skipped)} nested/illegal override(s) not applied as whole files",
+                  flush=True)
 
     print(f"      -> Rendered case files written successfully.", flush=True)
     return {"case_files": case}
+
+
+def preflight_case(state: CaseGraphState) -> dict:
+    """Run the preflight gate (Levels A/B/C) before the full Docker ladder.
+
+    A static audit first (no Docker); if that passes, mesh checks and a bounded
+    solver dry-run predict whether the full `foamRun` will converge. FAILs are
+    routed back to build_intent/patch_files with the audit as evidence, so a
+    known-bad case never spends minutes on a doomed validation run.
+    """
+    case_dir = Path(state.get("case_dir", ""))
+    print(f"\n[4.5/5] Preflight gate on {case_dir} (audit + bounded dry run)...", flush=True)
+    agent = ValidationAgent(nprocs=DEFAULT_PROCS)
+    result = run_preflight_with_agent(case_dir, agent)
+    state["preflight"] = result
+    feedback = None
+    if result.verdict is PreflightVerdict.FAIL:
+        feedback = "[preflight] " + result.as_evidence()
+    print(f"      -> Preflight: {result.verdict.name} "
+          f"({len([f for f in result.audit if f.level == 'fail'])} FAIL, "
+          f"{len([f for f in result.audit if f.level == 'warn'])} WARN)", flush=True)
+    return {"preflight": result, "error_feedback": feedback}
 
 
 def patch_files(state: CaseGraphState) -> dict:
@@ -202,7 +250,9 @@ def patch_files(state: CaseGraphState) -> dict:
 
     overrides = extract_file_patches(prompt, state.get("config"))
     print(f"      -> LLM returned patches for: {list(overrides.keys())}", flush=True)
-    return {"file_overrides": overrides, "patch_attempt": patch_attempt}
+    stats = dict(state.get("patch_stats") or {})
+    stats["attempts"] = stats.get("attempts", 0) + 1
+    return {"file_overrides": overrides, "patch_attempt": patch_attempt, "patch_stats": stats}
 
 
 def validate_case(state: CaseGraphState) -> dict:
@@ -220,11 +270,38 @@ def validate_case(state: CaseGraphState) -> dict:
         print(f"      -> Validation FAILED at stage [{result.stage}]: {err_classes}", flush=True)
     else:
         print(f"      -> Validation PASSED at stage [{result.stage}]!", flush=True)
+    # If a targeted patch was applied this trip and validation now passes, the
+    # patch_files path did its job. Record it so patch resolution rate is measurable.
+    patch_stats = state.get("patch_stats")
+    if patch_stats and patch_stats.get("attempts") and state.get("file_overrides"):
+        if result.ok:
+            print(f"      -> patch resolved the failure (success rate: {patch_stats['attempts']} attempts)", flush=True)
+        else:
+            print(f"      -> patch did NOT resolve (attempt #{patch_stats['attempts']})", flush=True)
     return {"validation": result, "error_feedback": feedback, "done": result.ok}
 
 
 
 # --- routing ------------------------------------------------------------
+
+def route_after_preflight(state: CaseGraphState) -> str:
+    """Route after the preflight gate.
+
+    FAIL -> build_intent (the audit/dry-run evidence is already in
+    error_feedback). Environment-only skip (no Docker) or PASS/WARN -> proceed
+    to the full validation ladder, which is the source of truth.
+    """
+    pre = state.get("preflight")
+    if pre is not None and pre.verdict is PreflightVerdict.FAIL:
+        if "Docker/OpenFOAM unavailable" in (pre.message or ""):
+            return "validate_case"  # env skip — ladder will surface it
+        if state.get("attempt", 0) >= state.get("max_attempts", DEFAULT_MAX_ATTEMPTS):
+            print("      -> Max attempts reached after preflight failures. Ending run.", flush=True)
+            return END
+        print("      -> Preflight FAILED — routing back to build_intent with audit evidence.", flush=True)
+        return "build_intent"
+    return "validate_case"
+
 
 def route_after_validate(state: CaseGraphState) -> str:
     """Route by failure class.
@@ -235,6 +312,8 @@ def route_after_validate(state: CaseGraphState) -> str:
     All other LLM-owned failures (mesh/solver) go back to build_intent.
     """
     val = state.get("validation")
+    if state.get("intent_error"):
+        return END  # extraction failed at the LLM layer — end cleanly, surface error
     if val and val.ok:
         return END
     if state.get("attempt", 0) >= state.get("max_attempts", DEFAULT_MAX_ATTEMPTS):
@@ -267,13 +346,23 @@ def build_graph():
     graph.add_node("expand_spec", expand_spec)
     graph.add_node("render_case", render_case)
     graph.add_node("patch_files", patch_files)
+    graph.add_node("preflight_case", preflight_case)
     graph.add_node("validate_case", validate_case)
 
     graph.set_entry_point("read_mesh")
     graph.add_edge("read_mesh", "build_intent")
-    graph.add_edge("build_intent", "expand_spec")
+    graph.add_conditional_edges(
+        "build_intent",
+        lambda state: "expand_spec" if not state.get("intent_error") else END,
+        {"expand_spec": "expand_spec", END: END},
+    )
     graph.add_edge("expand_spec", "render_case")
-    graph.add_edge("render_case", "validate_case")
+    graph.add_edge("render_case", "preflight_case")
+    graph.add_conditional_edges(
+        "preflight_case",
+        route_after_preflight,
+        {"build_intent": "build_intent", "validate_case": "validate_case", END: END},
+    )
     graph.add_conditional_edges(
         "validate_case",
         route_after_validate,
@@ -299,5 +388,6 @@ def run(nl: str, case_dir: Path, mesh_dir: Path | None = None, config: LLMConfig
         "config": config,
         "attempt": 0,
         "max_attempts": max_attempts,
+        "patch_stats": {"attempts": 0},
     }
     return cast(CaseGraphState, app.invoke(initial))

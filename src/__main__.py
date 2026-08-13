@@ -80,7 +80,11 @@ def main(argv: list[str] | None = None) -> int:
             max_attempts=args.max_attempts,
         )
         result = final_state.get("validation")
-        if result is not None:
+        intent_error = final_state.get("intent_error")
+        if intent_error:
+            print(f"\nintent extraction failed: {intent_error}")
+            is_ok = False
+        elif result is not None:
             print(f"\n{'=' * 60}\nvalidation stage: {result.stage}\nok: {result.ok}")
             if not result.ok:
                 for err in result.errors:

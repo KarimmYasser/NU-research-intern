@@ -4,6 +4,167 @@ Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
 `docs/architecture/phase-ii-architecture.md` for the design this validates.
 
+## 2026-08-13 — Deterministic physical-envelope constraint layer ("a range of numbers, not model experience")
+
+**What changed this session (new `src/knowledge/envelopes.py` + registry):**
+
+- **New `physical_envelopes.json` registry:** curated, physically-plausible
+  ranges for every number the LLM can emit — `nu`, `p_ambient`, `temperature`,
+  `velocity`, `pressure`, `box_size`, `cells`, `surface_tension` — each with
+  min/max, a *clamp* band, and a *reject* band, plus a `rationale` string
+  (which fluid/regime each bound comes from, so the values are defensible to
+  the supervisor rather than arbitrary).
+
+- **New `EnvelopeConstraint` (`envelopes.py`, zero Docker, pure registry +
+  arithmetic):** runs in `extract_intent` as **Stage 1.5**, between Pydantic
+  parsing and the IntentValidator. Three-way deterministic decision per value:
+  - inside the envelope → passed through untouched;
+  - modestly outside (within the clamp band) → **clamped** to the nearest bound
+    and a machine-readable note printed — the pipeline does *not* trust the
+    model's single guess;
+  - outside the reject band (a units/dimension slip-up, e.g. `nu=1e5`) → an
+    `IntentValidationError` fed back into the existing LLM retry loop with the
+    valid range, mirroring IntentValidator feedback.
+  Velocity vectors are rescaled **direction-preserving** (magnitude clamped,
+  components scaled), so clamping never bends a prescribed flow angle.
+
+- **Species-derived `nu` envelope (determined, not hard-coded):** when
+  `fluid_species` is named, the `nu` envelope is computed from the species'
+  dynamic viscosity and molecular weight in `thermophysics.json` via
+  ideal-gas `rho = p·Mw/(R·T)` at the case's p_ambient/temperature, then a
+  decade band around that reference (`nu_ref/10 .. nu_ref·10`, reject beyond
+  ±2 decades). Verified numerically: air at 1 atm / 300 K derives nu_ref
+  ≈ 1.58e-5 m²/s. So `nu=1e-5` (air's true value) passes with zero notes,
+  while the same `nu=0.5` that the *static* envelope would have clamped to
+  0.1 is now **rejected** because it is ~4 decades above the real fluid.
+  Unknown species and all case-parameter fields (temperature, pressure,
+  box_size, cells, velocity) fall back to the curated static ranges. This
+  directly answers "hard-coded or determined?": fluid-property bounds are
+  determined from data; case-regime bounds stay curated constants.
+
+**Why this matters:** the LLM (a small local model) already passes structural
+checks, but nothing bounded its raw numbers — `nu=0.5` (a cP-style slip) or
+`temperature=2e5` would have reached the renderer as-is. Now the model only
+chooses *within* a physically plausible envelope; anything outside is
+deterministically corrected or rejected.
+
+- **Tests:** `tests/test_envelopes.py` — 16 cases (in-range pass-through,
+  nu/temperature/velocity/cells clamping, direction-preserving velocity
+  rescale, zero-velocity no-op, reject-band unit errors carry the
+  `IntentValidationError` shape, plus air-derived-envelope acceptance,
+  out-of-band rejection, unknown-species static fallback, and T-dependence
+  of the derived band). Full suite: **141 passed** (was 137).
+
+## 2026-08-13 — Preflight gate (Levels A/B/C): static audit + checkMesh metrics + dry-run divergence prediction
+
+**What changed this session (new `src/preflight/` package + graph wiring):**
+
+- **New `preflight_case` node in the LangGraph**, inserted between `render_case`
+  and `validate_case`. A preflight FAIL routes back to `build_intent` (with the
+  audit/dry-run evidence as `error_feedback`) *before* the full Docker ladder is
+  ever run — so a known-bad case never pays the cost of a minutes-long
+  `foamRun`. New `route_after_preflight` respects `max_attempts` and defers to
+  the ladder when Docker is unavailable (env skip, not a case failure).
+
+- **Level A — static dictionary audit (`audit.py`, zero Docker):** inspects the
+  rendered 0/, system/, constant/ files and flags config-level defects mapped to
+  known failure classes:
+  - missing `rho` field relaxation for compressible transient flow (the root
+    cause of the RHVT first-solve NaN; supervisor recipe `rho 0.05`)
+  - missing energy-field solver entry for compressible `fluid`
+    ("keyword h is undefined" DICTIONARY_SYNTAX root cause)
+  - missing PIMPLE/SIMPLE loop block, missing/non-`none` ddtSchemes default
+  - non-positive internalFields (p/T/k/epsilon/...), endTime ≤ startTime, deltaT ≤ 0
+  - patch-coverage: every mesh boundary patch must appear in every 0/ field
+    (catches the patchNotInMesh read-error class) + cross-field patch-set consistency
+
+- **Level B — checkMesh metrics parser (`metrics.py`):** parses quantitative
+  mesh quality (cells, non-orthogonality max/avg, skewness, aspect ratio, cell
+  volumes, `Failed N mesh checks`) out of checkMesh stdout and scores each
+  against OpenFOAM's own warn thresholds (non-ortho > 70, skewness > 4).
+
+- **Level C — bounded dry-run + residual-slope predictor (`dry_run.py`):**
+  patches controlDict to a few steps and runs the solver; `predict_from_residuals`
+  then classifies each field's trajectory by the **least-squares slope of
+  log10(initial residual) vs step index** — the right signal because residuals
+  decay exponentially:
+  - slope ≥ +0.05/step → **FAIL** (rising → divergence predicted)
+  - slope ≤ −0.05/step → **PASS** (decaying) — a single noisy uptick no longer
+    flips a genuinely downward run to FAIL
+  - flat/stalled between the bands → **WARN** (not converging, but not diverging)
+  - residual already at machine floor (≤ 1e-6) → PASS regardless of slope
+  - any nan/inf anywhere, or zero captured steps → **FAIL**
+  Rule of thumb implemented: *no NaN + downward trend = pass*.
+
+- **`ofdict.py`:** tolerant OpenFOAM dictionary helpers (strip_comments,
+  section-by-name with brace matching, scalar `entries()`, top-level `keys()`,
+  `boundary_fields()` for per-patch BCs) — deliberately not a full parser; the
+  audit only needs stable, well-formed sections, even after an LLM patch.
+
+**Test suite:** 125 tests, all passing (was 105). New tests cover: audit
+positivity/ρ-relaxation/energy-solver/patch-coverage findings, checkMesh metric
+parsing (good + bad + empty), predictor trajectories (diverging / decaying /
+NaN / no-steps / stalled-flat / noisy-uptick / machine-floor), preflight graph
+routing, and the `preflight_case` node feeding evidence back on FAIL.
+
+**Status:** preflight gate wired into the graph but not yet exercised against a
+live Docker run. The RHVT divergence (first-solve NaN) should now be caught by
+Level C's dry run in ~a few steps instead of the full ladder; Level A would have
+flagged the missing-ρ-relaxation defect statically. Live Docker verification is
+the next step.
+
+---
+
+## 2026-08-13 — Validation ladder: parallel solvers, NaN detection, early abort
+
+**What changed this session (all `src/validation/validation_agent.py` unless noted):**
+
+- **Parallel validation ladder:** `run_solver` now decomposes and runs `foamRun -parallel`
+  instead of always serial. `_run_solver_parallel()` auto-generates a scotch
+  `system/decomposeParDict` (canonical v13 header + `object` block, rewritten every run to
+  match `nprocs`), runs `decomposePar -force`, then `mpirun --allow-run-as-root -np N
+  foamRun -parallel`. `DEFAULT_PROCS` reads `FOAM_VALIDATION_PROCS` (default 1 = unchanged
+  serial behavior). This cut RHVT validation from ~20+ min to ~1.8 min on a 10.6M-cell mesh.
+
+- **NaN/divergence classified as `SOLVER_RUNTIME`:** previously a timeout with partial solver
+  output was mislabeled `ENVIRONMENT` (dead-ending the graph). Two fixes:
+  1. `_docker_run()` now retains `stdout+stderr` in the returned `output` even when the run
+     times out, so evidence is never discarded.
+  2. `parse_errors()` detects `nan`/`inf` residuals in solver log lines (e.g.
+     `GAMG: Solving for p, Initial residual = ..., Final residual = nan`) and classifies the
+     failure `SOLVER_RUNTIME` → routes back to `build_intent` for a physics retry instead of
+     `END`.
+
+- **Early NaN abort:** the container is killed at the *first* non-finite residual (via a
+  `reason=` callback into `_docker_run`), instead of burning the full `FOAM_VALIDATION_TIMEOUT`
+  on a run that is already diverged. Verified in the loop test suite.
+
+- **`checkMesh` smoke trap:** `run_ladder` runs `checkMesh` (cached) and `decomposePar` before
+  the solver rung; errors there are pulled into the ladder result so a missing/bad `polyMesh`
+  is caught early rather than surfacing as a mysterious `foamRun` failure.
+
+- **Breakage fixes surfaced by the live pipeline run:**
+  - `apply_file_overrides` crashed with `NotADirectoryError` when the LLM emitted nested patch
+    keys like `system/fvSolution/solvers` — now skipped+logged (regression test added).
+  - Intent validator now enforces the energy-field solver entry (`h`/`he`/`e` or a regex) for
+    the compressible `fluid` family's custom fvSolution — this was the root of the "keyword h
+    is undefined" DICTIONARY_SYNTAX failure; also fixed a latent bug where `flow_type=
+    compressible` never resolved to `case_type=fluid`, silently disabling the PIMPLE + energy
+    checks.
+
+**Test suite:** 105 tests, all passing. New tests for NaN classification, partial-output
+retention on timeout, nested-override rejection, and the energy-solver enforcement.
+
+**Live run (RHVT, `FOAM_VALIDATION_PROCS=10`):** `box_incomp` verified end-to-end with 8 procs
+(parallel `foamRun` completes, mesh preserved). RHVT pipeline run demonstrated the corrected
+loop: parallel `foamRun(-parallel)` → NaN → `SOLVER_RUNTIME` → routed back to `build_intent`
+with the NaN evidence; each retry now aborts at first NaN (~110 s) instead of serial looping.
+RHVT still diverges to NaN at the first solve (`Time = 0.0002`) — the retry mechanics are
+sound; the underlying physics setup (initial fields / wall functions / numerics) still needs a
+resolution pass.
+
+---
+
 ## 2026-08-12 — Generalization, file-patching node, and architecture bug-triage
 
 **What changed this session:**

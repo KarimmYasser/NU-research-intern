@@ -16,8 +16,8 @@ load_dotenv()  # reads .env in the repo root if present; no-op otherwise
 
 @dataclass
 class LLMConfig:
-    base_url: str = os.environ.get("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1")
-    model: str = os.environ.get("LOCAL_LLM_MODEL", "TODO-pick-a-model")
+    base_url: str = field(default_factory=lambda: os.environ.get("LOCAL_LLM_BASE_URL", "http://localhost:11434/v1"))
+    model: str = field(default_factory=lambda: os.environ.get("LOCAL_LLM_MODEL", "TODO-pick-a-model"))
     # Ollama/vLLM/SGLang don't check this key, but the OpenAI client requires
     # a non-empty string to be passed. LLM_GATEWAY_API_KEY is used for the
     # Siemens SDC LLM Gateway (cloud, dev/testing only - see .env.example);
