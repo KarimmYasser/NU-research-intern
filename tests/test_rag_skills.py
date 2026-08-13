@@ -114,6 +114,28 @@ def test_family_disambiguation_multiphase():
     assert any("bubbleColumn" in c.get("relative_path", "") for c in graph["cases"])
 
 
+def test_family_disambiguation_vof_and_cht():
+    """VOF sloshing prompts land on multiphase_vof; CHT cold plate prompts
+    land on conjugate_heat_transfer."""
+    retriever = KnowledgeRetriever()
+    vof_graph = retriever.retrieve_case_graph("sloshing water tank dam break VOF")
+    assert vof_graph["families"][0]["id"] == "multiphase_vof"
+
+    cht_graph = retriever.retrieve_case_graph("electronics cold plate heat exchanger CHT conjugate heat transfer")
+    assert cht_graph["families"][0]["id"] == "conjugate_heat_transfer"
+
+
+def test_external_mesh_patch_skill_cyclic_ami_stays_cyclic():
+    """A mesh patch typed cyclicAMI maps to cyclic role and stays periodic."""
+    skill = ExternalMeshPatchSkill()
+    intent = CaseIntent(patches=[PatchIntent(name="rotor_interface", role="wall")])
+    known_patches = [
+        MeshPatch(name="rotor_interface", type="cyclicAMI", n_faces=120, start_face=0),
+    ]
+    enriched = skill.enrich_intent(intent, known_patches=known_patches)
+    assert enriched.patches[0].role == "cyclic"
+
+
 def test_external_mesh_patch_skill_cyclic_stays_cyclic():
     """A mesh patch whose *type* is cyclic is a periodic boundary - even when
     its name says 'symmetry'. Type is authoritative over the name heuristic."""

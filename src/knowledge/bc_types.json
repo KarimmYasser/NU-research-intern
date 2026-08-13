@@ -90,6 +90,30 @@
       "description": "Periodic coupling \u2014 values mapped 1-to-1 to the matching cyclic patch."
     },
     {
+      "type": "cyclicAMI",
+      "applicable_fields": [
+        "U",
+        "p",
+        "T",
+        "k",
+        "epsilon",
+        "omega",
+        "nuTilda",
+        "nut",
+        "alphat",
+        "h",
+        "e"
+      ],
+      "required_keys": [],
+      "optional_keys": [
+        "neighbourPatch",
+        "transform",
+        "matchTolerance",
+        "value"
+      ],
+      "description": "Arbitrary Mesh Interface cyclic condition for non-conformal or rotating interfaces."
+    },
+    {
       "type": "symmetryPlane",
       "applicable_fields": [
         "U",

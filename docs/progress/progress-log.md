@@ -4,6 +4,13 @@ Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
 `docs/architecture/phase-ii-architecture.md` for the design this validates.
 
+## 2026-08-13 — Roadmap Enhancements: cyclicAMI support, GAMG validator checks & RAG family tests
+
+**What changed:**
+- **`cyclicAMI` Registry Support:** Added `cyclicAMI` to `src/knowledge/bc_types.json` and updated `render_field()` in `src/rendering/renderer.py` to default boundary values to `$internalField` for periodic patches (`cyclic`, `cyclicAMI`).
+- **GAMG Smoother & Agglomerator Validation:** Expanded `IntentValidator._check_custom_fv_solution()` in `src/knowledge/intent_validator.py` to validate `GAMG` smoother keywords (`GaussSeidel`, `symGaussSeidel`, `DIC`, `DILU`, etc.) and agglomerators (`faceAreaPair`, `algebraicPair`, `pair`).
+- **RAG & Skill Test Suite:** Added test coverage in `tests/test_rag_skills.py` for multiphase (`multiphase_vof`), CHT (`conjugate_heat_transfer`), and `cyclicAMI` mesh patch role enrichment.
+
 ## 2026-08-13 — Velocity Seeding Fix for Compressible Solver Stability
 
 **What changed:**

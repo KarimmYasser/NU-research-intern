@@ -1098,6 +1098,8 @@ def render_field(field: Field, patches: list[Patch]) -> str:
             inner_lines.append(f"        value           {bc.value};")
         elif bc.type in _WALL_FUNCTIONS:
             inner_lines.append(f"        value           {field.internal_field};")
+        elif bc.type in ("cyclic", "cyclicAMI"):
+            inner_lines.append("        value           $internalField;")
         inner = "\n".join(inner_lines)
         bf_parts.append(f"    {p.name}\n    {{\n{inner}\n    }}")
     boundary = "\n\n".join(bf_parts)

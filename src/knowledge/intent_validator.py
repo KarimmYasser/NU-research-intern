@@ -361,6 +361,28 @@ class IntentValidator:
                 )
             )]
 
+        # Check GAMG smoother and agglomerator keywords if GAMG is specified
+        valid_smoothers = {"GaussSeidel", "symGaussSeidel", "DIC", "FDIC", "DILU", "nonBlockingGaussSeidel"}
+        valid_agglomerators = {"faceAreaPair", "algebraicPair", "pair"}
+        for match in re.finditer(r"\bsolver\s+GAMG\b[^}]*\}", body, re.DOTALL):
+            block = match.group(0)
+            smoother_match = re.search(r"\bsmoother\s+([A-Za-z0-9_]+)", block)
+            if smoother_match:
+                sm = smoother_match.group(1)
+                if sm not in valid_smoothers:
+                    return [IntentValidationError(
+                        field=path,
+                        message=f"Unknown GAMG smoother '{sm}'. Valid GAMG smoothers: {sorted(valid_smoothers)}"
+                    )]
+            agglom_match = re.search(r"\bagglomerator\s+([A-Za-z0-9_]+)", block)
+            if agglom_match:
+                agg = agglom_match.group(1)
+                if agg not in valid_agglomerators:
+                    return [IntentValidationError(
+                        field=path,
+                        message=f"Unknown GAMG agglomerator '{agg}'. Valid GAMG agglomerators: {sorted(valid_agglomerators)}"
+                    )]
+
         return []
 
     @staticmethod
