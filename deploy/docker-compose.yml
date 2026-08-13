@@ -1,0 +1,66 @@
+# VM deployment for the SESC-2026-02 agentic-CFD pipeline.
+#
+# Services:
+#   ollama   - local LLM (no external API calls; OpenAI-compatible /v1 endpoint)
+#   pipeline - the LangGraph pipeline (python -m src), which validates cases by
+#              running OpenFOAM in a SIBLING container on the host docker daemon
+#              via the mounted socket (docker-outside-of-docker).
+#
+# CRITICAL - path alignment: src/validation/validation_agent.py runs
+#   docker run -v {case_dir}:/case ...
+# where case_dir is the path *inside this container*. The host daemon resolves
+# that path on the HOST filesystem, so the workspace bind mount MUST use the
+# same absolute path on both sides. Default: /srv/sesc. Keep SESC_WORKDIR
+# identical on the host and inside the container - change it via the
+# SESC_WORKDIR env var and the .env file, never the compose file alone.
+#
+# The OpenFOAM image (FOAM_DOCKER_IMAGE, default microfluidica/openfoam:13) is
+# pulled onto the HOST daemon, not into this image. See offline-load.sh for an
+# air-gapped VM.
+
+name: sesc-2026-02
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      # Model blobs live under the path-aligned workspace so offline-load.sh
+      # can drop a pre-pulled model dir straight into the tree before start.
+      - ${SESC_WORKDIR:-/srv/sesc}/ollama-models:/root/.ollama
+    ports:
+      # Exposed on the VM only so the host CLI / other tools can reach it; the
+      # pipeline reaches it over the compose network as "ollama".
+      - "127.0.0.1:11434:11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  pipeline:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      # Point at the compose-network Ollama service, not localhost (which is
+      # this container, not the host).
+      LOCAL_LLM_BASE_URL: http://ollama:11434/v1
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-llama3.1:8b}
+      # OpenFOAM runs as a sibling container on the HOST daemon.
+      FOAM_DOCKER_IMAGE: ${FOAM_DOCKER_IMAGE:-microfluidica/openfoam:13}
+      FOAM_VALIDATION_TIMEOUT: ${FOAM_VALIDATION_TIMEOUT:-600}
+      FOAM_VALIDATION_PROCS: ${FOAM_VALIDATION_PROCS:-1}
+    volumes:
+      # Docker-outside-of-Docker: pipeline shells out to `docker run`, so it
+      # needs the host socket.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Path-aligned workspace (see header). Cases, prompts, and any provided
+      # mesh live under this single tree on both host and container.
+      - ${SESC_WORKDIR:-/srv/sesc}:/srv/sesc
+    working_dir: /srv/sesc
+

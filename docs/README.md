@@ -8,6 +8,7 @@ Reference/onboarding documentation for the SESC-2026-02 internship, classified b
   - `openfoam-onboarding.md` — start here for OpenFOAM; indexes `openfoam/{case-structure,blockmesh,command-reference}.md`.
 - `infrastructure/` — Phase I infrastructure and the local-LLM decision.
   - `vm-ollama-setup.md` — Ubuntu VM + OpenFOAM v13 + Ollama walkthrough (the Week 2 KPI).
+  - `vm-deploy-bundle.md` — the `deploy/` docker-compose + offline-transfer bundle for one-command bring-up on the isolated VM.
   - `local-llm-backend-comparison.md` — Ollama vs vLLM vs alternatives.
 - `architecture/` — the Phase II engineering plan and its research threads.
   - `phase-ii-architecture.md` — the structured-IR + deterministic-renderer pipeline plan, validation ladder, and meshing verdict.

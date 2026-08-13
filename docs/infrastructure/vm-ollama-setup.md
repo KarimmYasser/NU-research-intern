@@ -2,6 +2,14 @@
 
 Step-by-step for the concept note's Phase I infrastructure tasks: provision the isolated Ubuntu VM, install OpenFOAM v13, deploy a local LLM, and confirm the API responds — the literal Week 2 KPI. Commands verified against the official OpenFOAM Foundation download page and Ollama's docs (2026); cited inline.
 
+> **Deploying the pipeline, not just OpenFOAM?** This doc covers the *native*
+> install path (OpenFOAM + Ollama directly on the VM). The Phase II pipeline
+> itself runs OpenFOAM in containers, so if the goal is to bring up the whole
+> pipeline on the VM, skip ahead to `docs/infrastructure/vm-deploy-bundle.md` —
+> it dockerizes the same pieces as a one-command compose + offline transfer
+> bundle. The native path here is still useful if you want the OpenFOAM CLI
+> directly on the host for manual inspection.
+
 ## 1. VM baseline
 
 - **OS:** Ubuntu 22.04 LTS, 24.04 LTS, or a recent interim release (25.04/25.10) — OpenFOAM v13 is officially packaged for these. For a long-lived research VM, prefer an LTS (22.04 or 24.04). ([openfoam.org/download/13-ubuntu](https://openfoam.org/download/13-ubuntu/))
