@@ -82,6 +82,20 @@ relaxationFactors { fields { p 0.3; } equations { U 0.7; } }
     assert errors == []
 
 
+def test_asymmetric_pcg_solver_is_caught(validator):
+    fv_solution = """
+SIMPLE { nNonOrthogonalCorrectors 0; }
+solvers
+{
+    p { solver GAMG; tolerance 1e-6; relTol 0.01; }
+    h { solver PCG; tolerance 1e-6; relTol 0.01; }
+}
+"""
+    intent = _make_simple_intent(flow_type="compressible", custom_fv_solution=fv_solution)
+    errors = validator.validate(intent)
+    assert any("PCG" in str(e) and "asymmetric" in str(e) for e in errors), f"Errors: {errors}"
+
+
 # ─── Unknown BC type ───────────────────────────────────────────────────────────
 
 def test_unknown_bc_type_is_caught(validator):

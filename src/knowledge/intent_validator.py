@@ -344,6 +344,23 @@ class IntentValidator:
                         "the standard preset which already covers it."
                     )
                 )]
+
+        # Symmetric solvers like PCG cannot be used for asymmetric fields (h, U, k, epsilon, etc.)
+        asymmetric_pcg = re.search(
+            r'("(?:[^"]*\b(?:h|he|e|U|k|epsilon|omega|nut|alphat|rho)\b[^"]*)"|'
+            r'\b(?:h|he|e|U|k|epsilon|omega|nut|alphat|rho)\b)\s*\{[^}]*\bsolver\s+PCG\b',
+            body
+        )
+        if asymmetric_pcg:
+            return [IntentValidationError(
+                field=path,
+                message=(
+                    "Linear solver 'PCG' is only valid for symmetric matrices (e.g. pressure p/p_rgh). "
+                    "Asymmetric transport fields (h, U, k, epsilon, omega, etc.) must use an asymmetric "
+                    "matrix solver such as 'PBiCGStab', 'smoothSolver', or 'GAMG'."
+                )
+            )]
+
         return []
 
     @staticmethod
