@@ -238,6 +238,22 @@ class IntentValidator:
                         )
                     ))
 
+            # Check alpha phase fraction bounds [0, 1]
+            if field_name.startswith("alpha"):
+                for val_key in ("value", "inletValue"):
+                    val_str = bc_dict.get(val_key)
+                    if val_str is not None and isinstance(val_str, (int, float, str)):
+                        try:
+                            s = val_str.replace("uniform", "").strip() if isinstance(val_str, str) else str(val_str)
+                            val = float(s)
+                            if val < 0.0 or val > 1.0:
+                                errors.append(IntentValidationError(
+                                    field=f"{field_path}.{val_key}",
+                                    message=f"Phase fraction boundary value '{val}' for field '{field_name}' must be within physical bounds [0, 1]."
+                                ))
+                        except ValueError:
+                            pass
+
         return errors
 
     def _check_relaxation_factors(self, fv_solution_body: str, path: str) -> list[IntentValidationError]:

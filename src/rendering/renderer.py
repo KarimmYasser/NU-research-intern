@@ -1112,6 +1112,29 @@ def render_field(field: Field, patches: list[Patch]) -> str:
     return f"{_header(field.field_class, field.name)}\n{body}\n{FOOTER}\n"
 
 
+def render_setfieldsdict(spec: CaseSpec) -> str:
+    """Render a default setFieldsDict for VoF phase fraction initialization."""
+    phase = spec.phases[0] if spec.phases else "water"
+    body = (
+        "defaultFieldValues\n"
+        "(\n"
+        f"    volScalarFieldValue alpha.{phase} 0\n"
+        ");\n\n"
+        "regions\n"
+        "(\n"
+        "    boxToCell\n"
+        "    {\n"
+        "        box (0 0 0) (1 1 1);\n"
+        "        fieldValues\n"
+        "        (\n"
+        f"            volScalarFieldValue alpha.{phase} 1\n"
+        "        );\n"
+        "    }\n"
+        ");"
+    )
+    return f"{_header('dictionary', 'setFieldsDict', 'system')}\n\n{body}\n\n{FOOTER}\n"
+
+
 def render(spec: CaseSpec) -> CaseFiles:
     """Render a validated CaseSpec into an in-memory CaseFiles (v13)."""
     case = CaseFiles()
@@ -1121,6 +1144,9 @@ def render(spec: CaseSpec) -> CaseFiles:
     case.system["controlDict"] = render_controldict(spec)
     case.system["fvSchemes"] = render_fvschemes(spec)
     case.system["fvSolution"] = render_fvsolution(spec)
+    if spec.case_type in ("incompressibleVoF", "compressibleVoF", "incompressibleMultiphaseVoF", "compressibleMultiphaseVoF"):
+        if "system/setFieldsDict" not in spec.extra_files:
+            case.system["setFieldsDict"] = render_setfieldsdict(spec)
     # Physics property layer: base physicalProperties is replaced by per-phase files
     # for VoF/Euler families; solids and films get their own property dictionaries.
     if spec.per_phase_properties:

@@ -59,11 +59,11 @@ def audit_case(case_dir: Path) -> list[AuditFinding]:
     compressible = "fluid" in solver or "thermoType" in phys
 
     # 1. controlDict: solver + basic time integrity
+    cd = entries(control) if control else {}
     if not control:
         findings.append(AuditFinding("missing_controlDict", "fail",
                                      "system/controlDict missing or unreadable"))
     else:
-        cd = entries(control)
         findings.append(AuditFinding("solver_entry", "pass",
                                      f"controlDict solver = '{solver}'"))
         _check_time(cd, findings)
@@ -94,6 +94,10 @@ def audit_case(case_dir: Path) -> list[AuditFinding]:
                                      "system/fvSolution missing or unreadable"))
     else:
         _check_fvsolution(fvsolution, compressible, ddt_default, findings)
+
+    # 3.5 Courant number check for transient solvers
+    if control:
+        _check_courant_number(cd, zero, ddt_default, findings)
 
     # 4. 0/ fields: positivity for solved scalars.
     _check_internal_fields(zero, compressible, findings)
@@ -128,6 +132,35 @@ def _check_time(cd: dict[str, str], findings: list[AuditFinding]) -> None:
     if dt is not None and dt <= 0:
         findings.append(AuditFinding("nonpositive_deltaT", "fail",
                                      f"deltaT = {dt} — non-positive timestep"))
+
+
+def _check_courant_number(cd: dict[str, str], zero: Path, ddt_default: str | None, findings: list[AuditFinding]) -> None:
+    """Estimate Courant number Co = V_max * deltaT / h_est for transient solver modes."""
+    import math
+    if ddt_default in ("none", "steadyState", None):
+        return
+    dt = finite_value(cd.get("deltaT"))
+    if dt is None or dt <= 0:
+        return
+    u_file = zero / "U"
+    if not u_file.is_file():
+        return
+    u_text = _read_dir(u_file)
+    vectors = re.findall(r"uniform\s*\(\s*([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s*\)", u_text)
+    if not vectors:
+        return
+    mags = [math.sqrt(float(x)**2 + float(y)**2 + float(z)**2) for x, y, z in vectors]
+    v_max = max(mags) if mags else 0.0
+    if v_max <= 0:
+        return
+    h_est = 0.01
+    co = (v_max * dt) / h_est
+    if co > 10.0 or (v_max > 10.0 and dt >= 0.1):
+        findings.append(AuditFinding(
+            "high_courant_number", "fail",
+            f"Estimated Courant number Co = {co:.1f} (V_max = {v_max:.1f} m/s, deltaT = {dt} s, h = {h_est} m) "
+            f"exceeds transient stability limit (Co > 10). Set deltaT <= 1e-4s for high-speed transient flows."
+        ))
 
 
 def _check_fvsolution(fv: str, compressible: bool, ddt_default: str | None,

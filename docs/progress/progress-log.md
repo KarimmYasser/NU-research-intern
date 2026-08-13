@@ -4,6 +4,14 @@ Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
 `docs/architecture/phase-ii-architecture.md` for the design this validates.
 
+## 2026-08-13 — Pipeline Accuracy & Reliability Boosters
+
+**What changed:**
+- **Courant Static Guardrail (`_check_courant_number` in `src/preflight/audit.py`):** Added static Courant number estimation ($Co = V_{\max} \Delta t / h$) in Preflight Level A. Unphysical timesteps on high-speed flows (e.g. `deltaT = 1.0 s` on 200 m/s flow) are caught in 1 ms before running Docker, providing instant feedback to correct `deltaT <= 1e-4s`.
+- **Automated `setFieldsDict` Phase Initialization (`render_setfieldsdict` in `src/rendering/renderer.py`):** Automatically renders `system/setFieldsDict` for VoF cases (`incompressibleVoF`, `compressibleVoF`, etc.), ensuring phase fractions (`alpha.water`) start initialized.
+- **Multiphase Alpha Field Validation (`src/knowledge/intent_validator.py`):** Added validation enforcing physical bounds $[0, 1]$ on `alpha.*` boundary override values.
+- **Test Suite:** Added `tests/test_accuracy_harness.py`. All 165 tests pass cleanly.
+
 ## 2026-08-13 — Roadmap Enhancements: cyclicAMI support, GAMG validator checks & RAG family tests
 
 **What changed:**
