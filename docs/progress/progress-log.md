@@ -4,6 +4,30 @@ Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
 `docs/architecture/phase-ii-architecture.md` for the design this validates.
 
+## 2026-08-13 — Developer reference split into per-concern docs (`docs/development/`)
+
+**What changed:** the monolithic `docs/guides/developer-guide.md` (~420 lines) is
+now a short entry page pointing into a new **split-by-concern reference** under
+`docs/development/` (~1,270 lines, 9 docs), so a developer reads only the doc for
+their concern:
+
+- `README.md` — index + "which doc do you need?" table + full module map
+- `overview.md` — architecture + end-to-end data flow in one pass
+- `ir-and-rendering.md` — `CaseIntent`/`CaseSpec`, the 18-family `case_types.py`
+  registry, `intent_to_spec()` internals, renderer + preset pairing
+- `orchestration.md` — LangGraph nodes, routing tables, LLM extraction stages
+- `knowledge-layer.md` — JSON registries, RAG, `IntentValidator`, physical
+  envelopes, skills
+- `validation-and-preflight.md` — Docker ladder, `FailureClass` routing,
+  NaN/parallel ladder, preflight Levels A/B/C
+- `config-and-llm.md` — LLM client, env vars, mesh I/O, CLI
+- `extending.md` — concrete recipes (new solver family, species, BC, envelope,
+  validation check)
+- `testing-and-conventions.md` — suite map + conventions/gotchas
+
+`docs/README.md` and `CLAUDE.md` index the new folder. All cross-links verified;
+full suite still **141 passed**. Committed as `abfd910`.
+
 ## 2026-08-13 — Deterministic physical-envelope constraint layer ("a range of numbers, not model experience")
 
 **What changed this session (new `src/knowledge/envelopes.py` + registry):**
