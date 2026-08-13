@@ -4,6 +4,50 @@ Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
 `docs/architecture/phase-ii-architecture.md` for the design this validates.
 
+## 2026-08-13 — Velocity Seeding Fix for Compressible Solver Stability
+
+**What changed:**
+- **Velocity Seeding (`_initial_U` in `src/ir/intent.py`):** Fixed the step-discontinuity shock on high-speed compressible flows (RHVT h-NaN fix). Instead of initializing the internal field to quiescent `uniform (0 0 0)` against fast nozzle inlets (e.g., 200 m/s), `_initial_U(intent)` seeds the domain `U` internal field using the dominant inlet velocity.
+- **Regression Testing:** Added `test_initial_U_seeded_from_dominant_inlet()` in `tests/test_intent.py` asserting that `U` internalField is correctly populated from dominant inlet velocity vectors.
+
+## 2026-08-13 — Chunkless RAG: semantic case-family taxonomy + optional-file generation
+
+**What changed this session (three linked capabilities so the agent handles
+arbitrary / optional OpenFOAM files and reasons over case *hierarchy*, not
+word matches):**
+
+1. **`extra_files` map (IR → renderer).** `CaseIntent.extra_files` /
+   `CaseSpec.extra_files` now carry arbitrary case-relative files
+   (`system/fvConstraints`, `system/functions`, `constant/thermo/...`); the
+   renderer writes them with subdir creation (`CaseFiles.extra`), the LLM schema
+   exposes them, and `IntentValidator._check_extra_files` blocks path traversal
+   while allowing any depth. Extra files write after the standard layers, so an
+   agent can also ship a whole-file first-render override.
+
+2. **`file_tree` in `v13_tutorials.json` (252 cases).** Each tutorial record now
+   carries its case file tree (0/, constant/, system/), extracted from
+   `temp/openfoam-repo/OpenFOAM-13/tutorials` by the new reproducible
+   `src/knowledge/rebuild_tutorials.py`, plus a machine-written one-line
+   `description`. The RAG deep path surfaces the *optional* files a reference
+   case ships (functions, fvConstraints, setFieldsDict, residuals).
+
+3. **Semantic case-family taxonomy (`case_families.json`) + re-ranked
+   `retrieve_case_graph`.** 17 hand-described families (compressible
+   internal/external, VOF, Euler multiphase, CHT, thermal-buoyant, rotating,
+   particles, combustion, ...) group all tutorials via explicit overrides →
+   longest include cue → category base (exclude veto). Retrieval walks
+   **query → family (matched on the family's *description*, not case names) →
+   member cases**, with family-aware solver selection and a `ground` block that
+   explains *why* a case was retrieved and what it ships. Matching fixes: stop
+   words, underscore ids ("thermal_buoyant" → buoyant), plural/prefix hits
+   ("exchanger" → "exchangers"), primary-family dominance over keyword ties
+   ("column" doesn't beat an Euler bubble column).
+
+**Verified:** vortex-tube prompts (no literal v13 tutorial) resolve to
+`flow_compressible_internal` + shockTube-style cases; "mach 2 airfoil" →
+compressible external; "bubble column" → Euler; "sloshing fuel tank" → VOF;
+flat cavity prompts stay on the cheap path. Full suite **156 passed**.
+
 ## 2026-08-13 — Developer reference split into per-concern docs (`docs/development/`)
 
 **What changed:** the monolithic `docs/guides/developer-guide.md` (~420 lines) is

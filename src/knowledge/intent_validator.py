@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -129,11 +129,40 @@ class IntentValidator:
         if known_patches:
             errors.extend(self._check_patch_names(intent, known_patches))
 
+        # 7. extra_files paths must stay within the case directory (no traversal).
+        errors.extend(self._check_extra_files(intent))
+
         return errors
 
     # ------------------------------------------------------------------
     # Private checks
     # ------------------------------------------------------------------
+
+    def _check_extra_files(self, intent: CaseIntent) -> list[IntentValidationError]:
+        """Reject extra_files keys that escape the case directory (path traversal)
+        or use absolute paths. All keys inside the case dir are allowed: extra
+        files may target any depth (system/fvConstraints, constant/thermo/...)
+        and are written after the standard layers, so an agent can also ship
+        a whole-file override as a first-render extra.
+        """
+        extra = getattr(intent, "extra_files", None)
+        if not extra:
+            return []
+        errors: list[IntentValidationError] = []
+        for rel in extra:
+            if not isinstance(rel, str) or not rel.strip():
+                errors.append(IntentValidationError(
+                    field=f"extra_files[{rel!r}]",
+                    message="extra_files keys must be non-empty relative paths.",
+                ))
+                continue
+            p = PurePosixPath(rel)
+            if p.is_absolute() or ".." in p.parts:
+                errors.append(IntentValidationError(
+                    field=f"extra_files[{rel}]",
+                    message="extra_files paths must stay inside the case directory.",
+                ))
+        return errors
 
     def _check_turbulence_model(self, intent: CaseIntent) -> list[IntentValidationError]:
         model = getattr(intent, "turbulence_model", None)

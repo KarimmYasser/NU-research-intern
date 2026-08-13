@@ -24,6 +24,7 @@ from ir import (
     FluidProperties,
     Patch,
     PatchIntent,
+    Regime,
     TimeControl,
     TurbulenceRAS,
     intent_to_spec,
@@ -205,7 +206,7 @@ def test_channel_fixes_assessment_errors():
 # dynamicMeshDict, solid/film property dicts), grounded in the v13 tutorials.
 
 
-def _box_intent(case_type: str, regime: str = "laminar") -> CaseIntent:
+def _box_intent(case_type: str, regime: Regime = "laminar") -> CaseIntent:
     return CaseIntent(
         case_type=case_type, regime=regime,
         geometry="box", box_size=(1.0, 1.0, 0.1), cells=(10, 10, 1),

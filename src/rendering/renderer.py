@@ -1138,4 +1138,5 @@ def render(spec: CaseSpec) -> CaseFiles:
         case.constant["dynamicMeshDict"] = render_dynamicmeshdict(spec)
     for field in spec.fields:
         case.zero[field.name] = render_field(field, spec.patches)
+    case.extra.update(spec.extra_files)
     return case

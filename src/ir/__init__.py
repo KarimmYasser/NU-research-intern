@@ -1,6 +1,15 @@
 """Intermediate Representation (IR) sub-package."""
 
-from .intent import CaseIntent, PatchIntent, PatchRole, intent_to_spec
+from .intent import (
+    CaseIntent,
+    FlowType,
+    GeometryType,
+    PatchIntent,
+    PatchRole,
+    Regime,
+    SolverMode,
+    intent_to_spec,
+)
 from .spec import (
     BoxFace,
     BoxGeometry,
@@ -23,6 +32,10 @@ __all__ = [
     "CaseIntent",
     "PatchIntent",
     "PatchRole",
+    "Regime",
+    "FlowType",
+    "SolverMode",
+    "GeometryType",
     "intent_to_spec",
     "BoxFace",
     "PatchType",

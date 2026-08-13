@@ -39,6 +39,10 @@ from .spec import (
 )
 
 PatchRole = Literal["inlet", "outlet", "wall", "movingWall", "empty", "cyclic", "symmetry"]
+Regime = Literal["laminar", "turbulent"]
+FlowType = Literal["incompressible", "compressible"]
+SolverMode = Literal["transient", "steadyState"]
+GeometryType = Literal["box", "external_mesh"]
 
 
 class PatchIntent(BaseModel):
@@ -64,14 +68,14 @@ class CaseIntent(BaseModel):
     # solver module, the field set, and the property flavour (VoF, Euler,
     # film, solid, ...). Defaults keep the original single-phase behaviour.
     case_type: str = "incompressibleFluid"
-    regime: Literal["laminar", "turbulent"] = "turbulent"
-    flow_type: Literal["incompressible", "compressible"] = "incompressible"
-    solver_mode: Literal["transient", "steadyState"] = "transient"
+    regime: Regime = "turbulent"
+    flow_type: FlowType = "incompressible"
+    solver_mode: SolverMode = "transient"
     fluid_species: str | None = None  # air, nitrogen, co2, oxygen, helium, water_vapour
     nu: float = 1e-05  # kinematic viscosity [m^2/s] (incompressible)
     p_ambient: float = 100000.0  # reference/operating pressure [Pa] (compressible)
     temperature: float = 300.0  # internal/inlet reference temperature [K]
-    geometry: Literal["box", "external_mesh"] = "box"
+    geometry: GeometryType = "box"
     box_size: tuple[float, float, float] | None = None  # required if geometry == box
     cells: tuple[int, int, int] = (20, 20, 1)
     patches: list[PatchIntent]
@@ -91,6 +95,12 @@ class CaseIntent(BaseModel):
     custom_fv_solution: str | None = None
     # Full fvSchemes body. When set, overrides the static preset.
     custom_fv_schemes: str | None = None
+    # Arbitrary additional case files the solver/physics may require
+    # (system/fvConstraints, system/functions, constant/thermophysicalProperties,
+    # etc.). Keys are case-relative paths; values are the full file content.
+    # OpenFOAM solvers demand optional/domain-specific dictionaries we cannot
+    # enumerate in advance, so the agent may emit whatever the physics needs.
+    extra_files: dict[str, str] = {}  # arbitrary additional case-relative files
 
 
 # Box face assignment. Canonical map: inlet->xMin, outlet->xMax,
@@ -112,7 +122,7 @@ def _assign_faces(patches: list[PatchIntent]) -> dict[str, list[BoxFace]]:
                     f"Patch '{p.name}' has no faces: when any box patch lists "
                     "faces explicitly, every patch must list the faces it covers."
                 )
-        assigned = {p.name: list(p.faces) for p in patches}
+        assigned = {p.name: list(p.faces or []) for p in patches}
         seen: set[BoxFace] = set()
         for name, fs in assigned.items():
             for f in fs:
@@ -248,7 +258,7 @@ def _default_bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compr
         if a == "U":
             bc[f] = FieldBC(type="fixedValue", value=vec(p.velocity or (0, 0, 0))) if is_inlet_like \
                 else FieldBC(type="zeroGradient") if role == "outlet" \
-                else FieldBC(type="noSlip") if is_wall else None
+                else FieldBC(type="noSlip")
         elif a == "p":
             if is_wall:
                 bc[f] = FieldBC(type="fixedFluxPressure", value="uniform 0") if compressible \
@@ -354,6 +364,25 @@ def _resolve_case_type(intent: CaseIntent) -> CaseTypeDef:
 
 
 # Field factories per case type. Each returns (name, class, dims, internal_field).
+def _initial_U(intent: CaseIntent) -> str:
+    """Seed the U internal field from the dominant inlet velocity.
+
+    A quiescent (0 0 0) interior against a fast inlet (e.g. 50 m/s through
+    small nozzles) is a step discontinuity in velocity. The first compressible
+    pressure solve must then balance a huge initial mass source, which blows the
+    GAMG residual to ~1e68 and NaNs every field (the RHVT h-NaN). Starting the
+    whole domain at the strongest inlet velocity keeps the field continuous and
+    the first solve stable. Falls back to uniform (0 0 0) when no inlet has an
+    explicit velocity (box-internal start-up, natural convection, etc.).
+    """
+    velocities = [p.velocity for p in intent.patches
+                  if p.role == "inlet" and p.velocity is not None]
+    if not velocities:
+        return "uniform (0 0 0)"
+    dominant = max(velocities, key=lambda v: v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+    return f"uniform ({_num(dominant[0])} {_num(dominant[1])} {_num(dominant[2])})"
+
+
 def _add_turb_fields(fields, turbulent, compressible, k0, eps0, suffix: str = ""):
     if not turbulent:
         return
@@ -408,7 +437,7 @@ def _case_fields(def_: CaseTypeDef, intent: CaseIntent, turbulent: bool,
         fields.append(Field(name="delta", field_class="volScalarField",
                             dimensions=(0, 1, 0, 0, 0, 0, 0), internal_field="uniform 0"))
         fields.append(Field(name="U", field_class="volVectorField",
-                            dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field="uniform (0 0 0)"))
+                            dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field=_initial_U(intent)))
         fields.append(Field(name="p", field_class="volScalarField",
                             dimensions=dims_p, internal_field=p_int))
         # rivuletPanel 0/ carries T for both film families.
@@ -423,7 +452,7 @@ def _case_fields(def_: CaseTypeDef, intent: CaseIntent, turbulent: bool,
             fields.append(Field(name=f"alpha.{ph}", field_class="volScalarField",
                                 dimensions=(0, 0, 0, 0, 0, 0, 0), internal_field="uniform 0"))
             fields.append(Field(name=f"U.{ph}", field_class="volVectorField",
-                                dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field="uniform (0 0 0)"))
+                                dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field=_initial_U(intent)))
             if compressible:
                 fields.append(Field(name=f"T.{ph}", field_class="volScalarField",
                                     dimensions=(0, 0, 0, 1, 0, 0, 0),
@@ -439,7 +468,7 @@ def _case_fields(def_: CaseTypeDef, intent: CaseIntent, turbulent: bool,
     if name == "incompressibleDenseParticleFluid":
         carrier = phases[-1] if phases else "carrier"
         fields.append(Field(name=f"U.{carrier}", field_class="volVectorField",
-                            dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field="uniform (0 0 0)"))
+                            dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field=_initial_U(intent)))
         fields.append(Field(name="p", field_class="volScalarField",
                             dimensions=dims_p, internal_field=p_int))
         if turbulent:
@@ -456,7 +485,7 @@ def _case_fields(def_: CaseTypeDef, intent: CaseIntent, turbulent: bool,
     # Velocity + pressure. Incompressible hydrostatic families solve only p_rgh;
     # compressible gravity families solve both p and p_rgh; the rest solve p alone.
     fields.append(Field(name="U", field_class="volVectorField",
-                        dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field="uniform (0 0 0)"))
+                        dimensions=(0, 1, -1, 0, 0, 0, 0), internal_field=_initial_U(intent)))
     if def_.needs_gravity and not compressible:
         fields.append(Field(name="p_rgh", field_class="volScalarField",
                             dimensions=(1, -1, -2, 0, 0, 0, 0), internal_field="uniform 0"))
@@ -586,6 +615,7 @@ def intent_to_spec(intent: CaseIntent) -> CaseSpec:
         numerics=numerics,
         custom_fv_schemes=final_schemes,
         custom_fv_solution=final_solution,
+        extra_files=intent.extra_files or {},
         gravity=intent.gravity if intent.gravity is not None
                 else ((0, -9.81, 0) if def_.needs_gravity else None),
         phases=list(intent.phases or def_.phases),

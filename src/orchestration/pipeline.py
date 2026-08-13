@@ -126,6 +126,11 @@ _RESPONSE_FORMAT = {
                 },
                 "custom_fv_schemes": {"type": "string"},
                 "custom_fv_solution": {"type": "string"},
+                "extra_files": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                    "description": "Any additional case-relative files (e.g. system/fvConstraints, system/functions, constant/thermophysicalProperties). Keys are paths, values are full file content. Only for dictionaries the standard renderer does not emit.",
+                },
                 "patches": {
                     "type": "array",
                     "items": {

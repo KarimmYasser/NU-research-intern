@@ -165,6 +165,7 @@ class CaseSpec(BaseModel):
     custom_fv_schemes: str | None = None
     custom_fv_solution: str | None = None
     functions: list[str] = []  # raw controlDict function entries (e.g. "#includeFunc ...")
+    extra_files: dict[str, str] = PydanticField(default_factory=dict)  # any additional case-relative files
 
     # --- case-type-specific extras (populated by intent_to_spec / renderer) ---
     gravity: tuple[float, float, float] | None = None  # writes constant/g + enables p_rgh

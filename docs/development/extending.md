@@ -104,7 +104,7 @@ Test each in `tests/test_preflight.py`.
 | solver family | `case_types.py`, `intent.py`, `renderer.py`, `solvers.json` | `test_renderer.py` |
 | species | `thermophysics.json`, `pipeline.py` `_SCHEMA`/`_RESPONSE_FORMAT` | `test_intent.py`, `test_envelopes.py` |
 | BC type / guidance | `bc_types.json`, `boundary_conditions.json`, `intent_validator.py`, `_BC_GUIDANCE` | `test_intent_validator.py` |
-| RAG/tutorial numerics | `v13_tutorials.json`, `rag.py` | `test_rag_skills.py` |
+| RAG/tutorial numerics | `v13_tutorials.json`, `case_families.json`, `rag.py`, `rebuild_tutorials.py` | `test_rag_skills.py` |
 | envelope | `physical_envelopes.json`, `envelopes.py` (if derived) | `test_envelopes.py` |
 | validation check | `audit.py` / `metrics.py` / `dry_run.py` / `validation_agent.py` | `test_preflight.py`, `test_validation.py` |
 

@@ -17,8 +17,9 @@ read from them; **adding knowledge usually means editing JSON, not code.**
 | `bc_types.json` | IntentValidator | 27 known BC type names → applicable fields, required/optional keys |
 | `thermophysics.json` | RAG, `intent_to_spec`, envelopes | per-species `mixture` → molWeight, Cp, hf, μ, Pr (6 species) |
 | `turbulence_models.json` | IntentValidator | known RAS/LES model names |
-| `v13_tutorials.json` | RAG | fvSchemes/fvSolution snippets per tutorial solver/flow |
+| `v13_tutorials.json` | RAG | fvSchemes/fvSolution snippets per tutorial solver/flow + per-case file trees (252 cases) |
 | `physical_envelopes.json` | envelopes | plausible/reject ranges + rationale per numeric field |
+| `case_families.json` | RAG | the semantic taxonomy: 17 case families + human descriptions + include/exclude cues |
 
 The RAG `formatted` context, BC guidance, and species list are all rendered
 directly into the LLM system prompt — these files are the *voice* the model is
@@ -36,6 +37,33 @@ matches (falling back to the first entries when no hit). Typed lookups:
 
 `format_prompt_context(query)` renders the retrieved items into a markdown block
 appended to the LLM user prompt.
+
+**Chunkless RAG (case-graph retrieval).** `v13_tutorials.json` is a set of whole
+case records (solver, flow, field set, `file_tree`, captured snippets), not text
+chunks — so retrieval is a **graph walk**, not chunk similarity:
+
+- `retrieve_case_graph(query)` walks query → **semantic family** → its member
+  tutorial cases → returns the whole records plus a `ground` markdown block.
+  The family is matched on its *human description*, not case names: a
+  vortex-tube prompt (no literal v13 tutorial) resolves to the
+  `flow_compressible_internal` family and surfaces its shock-tube-style cases,
+  with an explicit "why" (matched family + reference case structure + the
+  optional files it ships — `system/fvConstraints`, `system/functions`, …).
+- `needs_deep_path(query)` is a cheap complexity heuristic (physics vocabulary
+  like vortex/tube/shock/multiphase/species). When it fires,
+  `format_prompt_context` appends the graph `ground`; otherwise the prompt stays
+  on the keyword fast path. The walk is deterministic — no extra LLM calls, so
+  the chunkless approach is cheap.
+- The **family taxonomy** (`case_families.json`) is the hierarchy the agent
+  reasons over — 17 families (incompressible internal/external, compressible
+  internal/external, thermal-buoyant, combustion, VOF, Euler multiphase,
+  particles, CHT, film, solid, rotating, potential, moving-mesh, mesh, legacy),
+  each with a human description. Every tutorial record carries a `family_id`,
+  `family_name` and a machine-generated one-line `description`; assignment order
+  is explicit override → longest include cue → category base (with exclude veto).
+- `src/knowledge/rebuild_tutorials.py` regenerates the `file_tree`, `family_id`
+  and `description` fields from `temp/openfoam-repo/OpenFOAM-13/tutorials`
+  (run from repo root).
 
 > **Note:** `intent_to_spec()` uses `_RETRIEVER` as a module-level singleton
 > (`ir/intent.py:24`) because loading the JSON files on every call wastes I/O on

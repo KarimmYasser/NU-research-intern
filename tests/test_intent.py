@@ -14,10 +14,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ir import CaseIntent, PatchIntent, intent_to_spec
+from ir import CaseIntent, PatchIntent, Regime, intent_to_spec
 
 
-def cavity_intent(regime: str = "turbulent") -> CaseIntent:
+def cavity_intent(regime: Regime = "turbulent") -> CaseIntent:
     return CaseIntent(
         regime=regime, nu=1e-5, geometry="box", box_size=(0.1, 0.1, 0.1), cells=(20, 20, 1),
         patches=[
@@ -298,6 +298,22 @@ def test_all_case_types_render_ready():
             raise AssertionError(f"case_type '{ct}' fails to expand: {e}") from e
 
 
+def test_initial_U_seeded_from_dominant_inlet():
+    intent = CaseIntent(
+        regime="turbulent", flow_type="compressible",
+        geometry="external_mesh",
+        patches=[
+            PatchIntent(name="inlet_slow", role="inlet", velocity=(0, 10, 0)),
+            PatchIntent(name="inlet_fast", role="inlet", velocity=(0, 0, 200)),
+            PatchIntent(name="outlet", role="outlet", pressure=100000),
+            PatchIntent(name="walls", role="wall"),
+        ],
+    )
+    spec = intent_to_spec(intent)
+    u_field = _field(spec, "U")
+    assert u_field.internal_field == "uniform (0 0 200)"
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in sorted(globals().items()):
@@ -306,3 +322,4 @@ if __name__ == "__main__":
             print(f"ok  {name}")
             n += 1
     print(f"\n{n} tests passed")
+

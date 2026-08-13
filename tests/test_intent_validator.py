@@ -34,7 +34,7 @@ def _make_simple_intent(**overrides) -> CaseIntent:
         ],
     )
     data.update(overrides)
-    return CaseIntent(**data)
+    return CaseIntent.model_validate(data)
 
 
 @pytest.fixture
@@ -387,3 +387,33 @@ def test_compressible_flow_type_maps_to_fluid_for_solver_control(validator):
     intent2 = _make_simple_intent(solver_mode="transient", custom_fv_solution=fv2)
     errs2 = validator.validate(intent2)
     assert any("energy field" in str(e) for e in errs2), f"Energy check not fired: {errs2}"
+
+
+# ─── extra_files (arbitrary additional case files) ─────────────────────────────
+
+def test_extra_files_any_case_relative_path_accepted(validator):
+    """The agent may emit any additional dictionary at any depth under the case
+    dir — system/fvConstraints, constant/thermo/... — exactly the optional
+    files OpenFOAM solvers demand that the standard renderer doesn't cover."""
+    intent = _make_simple_intent(extra_files={
+        "system/fvConstraints": "limitVelocity { type limitVelocity; }",
+        "constant/thermo/thermoDict": "// custom\n",
+        "0/U": "override",  # whole-file first-render override is legitimate
+    })
+    assert validator.validate(intent) == [], validator.validate(intent)
+
+
+def test_extra_files_path_traversal_rejected(validator):
+    """extra_files keys must stay inside the case directory: absolute paths and
+    ../ traversal are refused so the agent can't write outside the case."""
+    for bad in ("../etc/overflow", "/etc/hosts", "a/../../top"):
+        intent = _make_simple_intent(extra_files={bad: "x"})
+        errors = validator.validate(intent)
+        matches = [e for e in errors if "extra_files" in e.field]
+        assert any("inside the case directory" in e.message for e in matches), (bad, errors)
+
+
+def test_extra_files_empty_key_rejected(validator):
+    intent = _make_simple_intent(extra_files={"": "x"})
+    errors = validator.validate(intent)
+    assert any("extra_files" in e.field for e in errors), errors

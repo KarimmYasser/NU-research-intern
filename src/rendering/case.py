@@ -22,6 +22,7 @@ class CaseFiles:
     zero: dict[str, str] = field(default_factory=dict)  # e.g. "U", "p" -> file content
     constant: dict[str, str] = field(default_factory=dict)  # e.g. "physicalProperties"
     system: dict[str, str] = field(default_factory=dict)  # e.g. "blockMeshDict", "controlDict"
+    extra: dict[str, str] = field(default_factory=dict)  # arbitrary case-relative paths (agent-provided)
 
     def write(self, case_dir: Path) -> None:
         for name, content in self.zero.items():
@@ -33,6 +34,10 @@ class CaseFiles:
         for name, content in self.system.items():
             (case_dir / "system").mkdir(parents=True, exist_ok=True)
             (case_dir / "system" / name).write_text(content)
+        for rel_path, content in self.extra.items():
+            p = case_dir / rel_path
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
 
 
 def apply_file_overrides(case_dir: Path, overrides: dict[str, str]) -> list[str]:

@@ -1,0 +1,135 @@
+{
+  "families": [
+    {
+      "id": "flow_incompressible_internal",
+      "name": "Incompressible internal flows",
+      "description": "Single-phase incompressible Newtonian flow through pipes, ducts, channels, cavities, contractions and junctions with no free surface and no heat: pressure-drop, mixing, recirculation and separation in bounded internal geometry. Default family for channel/pipe/duct/cavity prompts.",
+      "base_categories": ["incompressibleFluid"],
+      "exclude_name_cues": ["mixer", "impeller", "rotor", "SRF", "propeller", "turbine",
+                            "wing", "airFoil", "cylinder", "motorBike", "windAround",
+                            "offsetCylinder", "elipse", "sphere", "naca", "wedge", "bump",
+                            "movingCone", "flange", "SnakeRiver", "hopper", "ballValve"]
+    },
+    {
+      "id": "flow_external_incompressible",
+      "name": "External incompressible flow over bodies",
+      "description": "Incompressible external flow around solid bodies - airfoils, vehicles, buildings, ships, cylinders, wind farms: lift, drag, wake, boundary layers and atmospheric exposure. Use when the flow is over, not through, an object.",
+      "base_categories": [],
+      "include_name_cues": ["airFoil", "motorBike", "windAround", "naca", "offsetCylinder",
+                            "elipse", "DTCHull", "planingHull", "cylinder", "T3A",
+                            "hydrofoil", "turbineSiting", "waveSubSurface", "catt"]
+    },
+    {
+      "id": "flow_compressible_internal",
+      "name": "Compressible internal / high-speed gas flows",
+      "description": "Compressible, thermal and high-speed gas flow in ducts, tubes, nozzles, throats and reservoirs: shock waves, decompression, sonic transitions, APERIODIC transients and strong property variation in confined geometry. Use for a shock tube, converging nozzle or pressurised tank discharging.",
+      "base_categories": ["fluid", "shockFluid"],
+      "exclude_name_cues": ["aerofoil", "naca", "buoyantCavity", "hotRoom", "hotRadiation",
+                            "stackPlume", "igloo", "externalCoupledCavity", "BernardCells",
+                            "annularThermalMixer", "helmholtzResonance"]
+    },
+    {
+      "id": "flow_compressible_external",
+      "name": "Compressible external flow / supersonic aerodynamics",
+      "description": "High-speed compressible flow past bodies: airfoils, wedges, cones, biconics at supersonic/hypersonic Mach numbers with attached and oblique shocks. Use for external aerodynamics with Mach > 0.3.",
+      "base_categories": [],
+      "include_name_cues": ["aerofoil", "naca", "wedge15Ma5", "biconic", "obliqueShock",
+                            "movingCone", "supersonicCorner", "squareBump"]
+    },
+    {
+      "id": "thermal_buoyant",
+      "name": "Buoyant, convective and radiative heat transfer",
+      "description": "Buoyancy-driven and natural convection with radiation and thermal comfort: hot rooms, stack plumes, cavities heated from below, radiators and solar loads. Persistent gravity + temperature difference drives the flow.",
+      "base_categories": [],
+      "include_name_cues": ["buoyantCavity", "hotRoom", "hotRadiation", "stackPlume",
+                            "igloo", "externalCoupledCavity", "BernardCells",
+                            "annularThermalMixer"]
+    },
+    {
+      "id": "combustion_species",
+      "name": "Combustion and reacting / multicomponent flows",
+      "description": "Reacting flows with species transport, flames and combustion chemistry: counter-flow flames, pool fires, engines, detonations and temperature-concentration coupling. Fields include species mass fractions plus energy/chemistry.",
+      "base_categories": ["multicomponentFluid", "XiFluid"],
+      "include_name_cues": ["aachenBomb", "counterFlowFlame", "smallPoolFire", "engine2Valve",
+                            "kivaTest", "stratified", "1D", "nc7h16", "membrane",
+                            "simplifiedSiwek", "parcelInBox"]
+    },
+    {
+      "id": "multiphase_vof",
+      "name": "Free-surface / interface capturing (VOF)",
+      "description": "Two-phase flow with a sharp interface captured by volume fraction: dam breaks, sloshing tanks, fuel-tank sloshing, waves, floating bodies, capillary rise, droplet impact and film seeding. alpha.phase field + surface tension; use for liquid-air interfaces, sloshing, wave and free-surface problems.",
+      "base_categories": ["compressibleVoF", "incompressibleVoF", "incompressibleMultiphaseVoF",
+                          "compressibleMultiphaseVoF"]
+    },
+    {
+      "id": "multiphase_euler",
+      "name": "Multiphase Euler / dispersed two-fluid flow",
+      "description": "Euler-Euler multiphase with inter-phase momentum, heat and mass transfer: bubble columns, fluidised beds, boiling, stirred tanks and phase change. Two or more continuous phases solved with per-phase equations.",
+      "base_categories": ["multiphaseEuler", "incompressibleDriftFlux"],
+      "exclude_name_cues": ["cyclone", "Goldschmidt", "column", "injectionChannel"]
+    },
+    {
+      "id": "multiphase_particles",
+      "name": "Particle-laden flows",
+      "description": "Dense and dilute particle-laden flow: cyclones, particle columns, fluidised particle beds and granular transport. Discrete particle phase coupled to the carrier flow.",
+      "base_categories": ["incompressibleDenseParticleFluid"],
+      "include_name_cues": ["cyclone", "Goldschmidt", "dahl", "spray", "injectionChannel"]
+    },
+    {
+      "id": "conjugate_heat_transfer",
+      "name": "Conjugate heat transfer / multi-region",
+      "description": "Conjugate conduction-convection across coupled solid and fluid regions: heat exchangers, cooled electrics, coating and wall boiling. Multiple tightly-coupled regions solve separately.",
+      "base_categories": ["multiRegion"],
+      "exclude_name_cues": ["hotBoxes"]
+    },
+    {
+      "id": "film_flow",
+      "name": "Thin-film and rivulet flows",
+      "description": "Isothermal and thermal film flows: thin liquid films, rivulets, droplets on panels and film-to-VOF coupling.",
+      "base_categories": ["isothermalFilm"],
+      "include_name_cues": ["rivulet", "VoFToFilm", "notchedRoller", "splashPanel", "film"]
+    },
+    {
+      "id": "solid_stress",
+      "name": "Solid mechanics / structural displacement",
+      "description": "Solid displacement and stresses under load: beams, plates with holes, thermal stress. Lagrangian solid fields, no fluid flow.",
+      "base_categories": ["solidDisplacement"]
+    },
+    {
+      "id": "rotating_machinery",
+      "name": "Rotating machinery / mixers / MRF",
+      "description": "Rotating machinery, mixers, impellers, rotors, propellers and stirred vessels modelled with MRF/SRF or mesh rotation: impeller flows, mixing tanks, rotors, wind and marine turbines.",
+      "base_categories": [],
+      "include_name_cues": ["mixer", "mixerVessel", "impeller", "rotor", "SRF", "propeller",
+                            "simpleRushton", "stirred", "aeratedStirred", "testTubeMixer",
+                            "turbineSiting"]
+    },
+    {
+      "id": "potential_flow",
+      "name": "Potential and free-surface potential flows",
+      "description": "Inviscid potential flow and its free-surface extensions: ocean-wave free surfaces, oscillating boxes, potential cylinders. Cheap top-down flow, no boundary layers.",
+      "base_categories": ["potentialFoam", "isothermalFluid"]
+    },
+    {
+      "id": "moving_mesh",
+      "name": "Moving-mesh and dynamic meshes",
+      "description": "Motion of the mesh itself: oscillating/floating bodies, 6-DoF objects, morphing geometry, overset and sliding interfaces.",
+      "base_categories": ["movingMesh"],
+      "include_name_cues": ["movingCone", "floatingObject", "rotatingCube", "sloshingTank2D3DoF",
+                            "sloshingTank3D", "DTCHullMoving", "wingMotion", "SnakeRiver",
+                            "spiralPipe"]
+    },
+    {
+      "id": "mesh_generation",
+      "name": "Mesh generation templates",
+      "description": "blockMesh / snappyHexMesh topology templates: pipes, spheres, flanges, sectors and the node-arc mesh helpers. Only the mesh, not a flow solution.",
+      "base_categories": ["mesh"]
+    },
+    {
+      "id": "legacy_compendium",
+      "name": "Legacy tutorial compendium (pre-v13 conventions)",
+      "description": "Older tutorial setups kept for reference: super- and subsonic corners, elbows, free-space heat exchangers, charged wires and legacy solver dictionaries (older property and turbulence dict names). Convert conventions to v13 before reuse.",
+      "base_categories": ["legacy"]
+    }
+  ]
+}
