@@ -350,7 +350,7 @@ def test_fluid_steady_fv_solution_requires_simple_block(validator):
 
 
 def test_fluid_custom_fv_solution_with_block_passes(validator):
-    fv = ('solvers { p { solver GAMG; } "(U|h|e|k|epsilon|R)" { solver PBiCGStab; } } '
+    fv = ('solvers { p { solver GAMG; smoother DIC; } "(U|h|e|k|epsilon|R)" { solver PBiCGStab; preconditioner DILU; } } '
           'PIMPLE { nCorrectors 2; } relaxationFactors { equations { U 0.5; } }')
     intent = _make_simple_intent(case_type="fluid", solver_mode="transient",
                                  custom_fv_solution=fv)
@@ -360,7 +360,7 @@ def test_fluid_custom_fv_solution_with_block_passes(validator):
 
 def test_incompressible_custom_fv_solution_not_forced_to_pimple(validator):
     """Only compressible `fluid` demands the solver-control block."""
-    fv = "solvers { p { solver PCG; } } PIMPLE { nCorrectors 2; }"
+    fv = "solvers { p { solver PCG; preconditioner DIC; } } PIMPLE { nCorrectors 2; }"
     intent = _make_simple_intent(case_type="incompressibleFluid",
                                  custom_fv_solution=fv)
     errors = validator.validate(intent)

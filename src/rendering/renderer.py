@@ -1059,14 +1059,16 @@ def render_field(field: Field, patches: list[Patch]) -> str:
         "kqRWallFunction", "epsilonWallFunction", "omegaWallFunction",
         "nutkWallFunction", "nutUSpaldingWallFunction", "nutUWallFunction",
         "alphatJayatillekeWallFunction", "alphatWallFunction",
-        "v2WallFunction", "kLowReWallFunction",
+        "compressible::alphatJayatillekeWallFunction", "compressible::alphatWallFunction",
+        "v2WallFunction", "kLowReWallFunction", "calculated",
     }
     bf_parts = []
     for p in patches:
         bc = p.bc.get(field.name)
         if bc is None:
             continue
-        inner_lines = [f"        type            {bc.type};"]
+        bc_type_name = "compressible::alphatWallFunction" if bc.type == "alphatWallFunction" else ("compressible::alphatJayatillekeWallFunction" if bc.type == "alphatJayatillekeWallFunction" else bc.type)
+        inner_lines = [f"        type            {bc_type_name};"]
         if hasattr(bc, "extra") and bc.extra:
             for k, v in bc.extra.items():
                 if k not in ("type", "value"):

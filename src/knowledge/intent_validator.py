@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
 import json
 
+from preflight.ofdict import entries, section, sub_blocks
+
 _KNOWLEDGE_DIR = Path(__file__).resolve().parent
 
 
@@ -422,17 +424,33 @@ class IntentValidator:
                         )
                     )]
 
-        # GAMG nCellsInCoarsestLevel minimum threshold check
-        for match in re.finditer(r"\bnCellsInCoarsestLevel\s+([\d]+)", body):
-            val = int(match.group(1))
-            if val < 500:
-                return [IntentValidationError(
-                    field=path,
-                    message=(
-                        f"GAMG parameter `nCellsInCoarsestLevel` value ({val}) is too small for complex/high-speed "
-                        "flows (must be >= 500, recommended 1000) to prevent multigrid coarsening divergence."
-                    )
-                )]
+        # Check individual linear solver blocks inside solvers { ... }
+        solvers_text = section(body, "solvers")
+        if solvers_text:
+            for name, block in sub_blocks(solvers_text):
+                e = entries(block)
+                kind = e.get("solver", "").strip()
+                if "rho" in name and kind == "GAMG":
+                    return [IntentValidationError(
+                        field=path,
+                        message=(
+                            f"Custom fvSolution solver block '{name}' cannot use GAMG for density. "
+                            "Use smoothSolver with GaussSeidel, or omit custom_fv_solution to use standard presets."
+                        )
+                    )]
+                need = {"GAMG": "smoother",
+                        "PCG": "preconditioner",
+                        "PBiCG": "preconditioner",
+                        "PBiCGStab": "preconditioner",
+                        "smoothSolver": "smoother"}.get(kind)
+                if need and not e.get(need):
+                    return [IntentValidationError(
+                        field=path,
+                        message=(
+                            f"Custom fvSolution solver block '{name}' ({kind}) is missing required key '{need}'. "
+                            f"Add '{need}' or omit custom_fv_solution to use standard presets."
+                        )
+                    )]
 
         return []
 

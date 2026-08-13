@@ -138,6 +138,20 @@ def test_check_mesh_caching(tmp_path):
     agent.clear_mesh_cache()
 
 
+def test_docker_run_handles_none_stdout(tmp_path):
+    from unittest.mock import MagicMock, patch
+    mock_proc = MagicMock()
+    mock_proc.stdout = None
+    mock_proc.communicate.return_value = ("output tail", "")
+    mock_proc.returncode = 0
+
+    agent = ValidationAgent()
+    with patch("subprocess.Popen", return_value=mock_proc):
+        res = agent._docker_run(tmp_path, ["checkMesh"])
+        assert res.returncode == 0
+        assert res.stdout == "output tail"
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in sorted(globals().items()):

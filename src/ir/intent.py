@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from typing import Literal
 
+import pydantic
 from pydantic import BaseModel
 
 from knowledge.rag import KnowledgeRetriever
@@ -91,8 +92,11 @@ class CaseIntent(BaseModel):
     # Turbulence model name. If None, defaults to kEpsilon.
     turbulence_model: str | None = None
     # Full fvSolution body (everything between the outer braces of the file body,
-    # excluding the FoamFile header). When set, overrides the static preset.
-    custom_fv_solution: str | None = None
+    # excluding the FoamFile header). Leave null/None to use standard preset.
+    custom_fv_solution: str | None = pydantic.Field(
+        default=None,
+        description="Optional fvSolution dictionary override string. Leave null/None to use the standard built-in OpenFOAM solver preset (HIGHLY RECOMMENDED). Only specify if custom settings are strictly required."
+    )
     # Full fvSchemes body. When set, overrides the static preset.
     custom_fv_schemes: str | None = None
     # Arbitrary additional case files the solver/physics may require

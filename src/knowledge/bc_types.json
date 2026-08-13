@@ -13,7 +13,8 @@
         "nut",
         "alphat",
         "h",
-        "e"
+        "e",
+        "rho"
       ],
       "required_keys": [
         "value"
@@ -34,7 +35,8 @@
         "nut",
         "alphat",
         "h",
-        "e"
+        "e",
+        "rho"
       ],
       "required_keys": [],
       "optional_keys": [],
@@ -62,7 +64,8 @@
         "nut",
         "alphat",
         "h",
-        "e"
+        "e",
+        "rho"
       ],
       "required_keys": [],
       "optional_keys": [],
@@ -81,7 +84,8 @@
         "nut",
         "alphat",
         "h",
-        "e"
+        "e",
+        "rho"
       ],
       "required_keys": [],
       "optional_keys": [
@@ -102,7 +106,8 @@
         "nut",
         "alphat",
         "h",
-        "e"
+        "e",
+        "rho"
       ],
       "required_keys": [],
       "optional_keys": [
@@ -126,7 +131,8 @@
         "nut",
         "alphat",
         "h",
-        "e"
+        "e",
+        "rho"
       ],
       "required_keys": [],
       "optional_keys": [],
@@ -145,7 +151,8 @@
         "nut",
         "alphat",
         "h",
-        "e"
+        "e",
+        "rho"
       ],
       "required_keys": [],
       "optional_keys": [],
@@ -156,12 +163,13 @@
       "applicable_fields": [
         "nut",
         "alphat",
-        "nuTilda"
+        "nuTilda",
+        "rho"
       ],
-      "required_keys": [
+      "required_keys": [],
+      "optional_keys": [
         "value"
       ],
-      "optional_keys": [],
       "description": "Value derived from other fields (post-processing only, not solved)."
     },
     {
@@ -226,6 +234,7 @@
         "epsilon",
         "omega",
         "nuTilda",
+        "nut",
         "alphat",
         "h",
         "e"
@@ -342,25 +351,49 @@
       "description": "Wall function for turbulent kinematic viscosity nut. (value defaults to the field internal value via the renderer)"
     },
     {
+      "type": "nutRoughWallFunction",
+      "applicable_fields": [
+        "nut"
+      ],
+      "required_keys": [],
+      "optional_keys": [
+        "value",
+        "Ks",
+        "Cs"
+      ],
+      "description": "Rough-wall function for turbulent kinematic viscosity nut."
+    },
+    {
       "type": "nutLowReWallFunction",
       "applicable_fields": [
         "nut"
       ],
-      "required_keys": [
+      "required_keys": [],
+      "optional_keys": [
         "value"
       ],
-      "optional_keys": [],
       "description": "Low-Reynolds-number wall function for nut."
+    },
+    {
+      "type": "alphatWallFunction",
+      "applicable_fields": [
+        "alphat"
+      ],
+      "required_keys": [],
+      "optional_keys": [
+        "value",
+        "Prt"
+      ],
+      "description": "Thermal diffusivity wall function for alphat (alias for compressible::alphatWallFunction)."
     },
     {
       "type": "compressible::alphatJayatillekeWallFunction",
       "applicable_fields": [
         "alphat"
       ],
-      "required_keys": [
-        "value"
-      ],
+      "required_keys": [],
       "optional_keys": [
+        "value",
         "Prt"
       ],
       "description": "Compressible thermal diffusivity wall function (Jayatilleke model)."
@@ -370,10 +403,9 @@
       "applicable_fields": [
         "alphat"
       ],
-      "required_keys": [
-        "value"
-      ],
+      "required_keys": [],
       "optional_keys": [
+        "value",
         "Prt"
       ],
       "description": "Simple compressible turbulent thermal diffusivity wall function."

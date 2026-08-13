@@ -219,18 +219,20 @@ class ValidationAgent:
             line_buffer: list[str] = []
             start = _time.monotonic()
             try:
-                while True:
-                    line = proc.stdout.readline()
-                    if not line:
-                        break  # EOF only when the process exits
-                    line_buffer.append(line)
-                    if stop_on_nan and self._NAN_RE.search(line):
-                        reason = "nan"
-                        break
-                    if _time.monotonic() - start > self.timeout:
-                        reason = "timeout"
-                        break
-                proc.kill()
+                if proc.stdout is not None:
+                    while True:
+                        line = proc.stdout.readline()
+                        if not line:
+                            break  # EOF only when the process exits
+                        line_buffer.append(line)
+                        if stop_on_nan and self._NAN_RE.search(line):
+                            reason = "nan"
+                            break
+                        if _time.monotonic() - start > self.timeout:
+                            reason = "timeout"
+                            break
+                if reason in ("nan", "timeout"):
+                    proc.kill()
                 tail = proc.communicate()[0] or ""
                 exit_code = proc.returncode
             except subprocess.TimeoutExpired:
