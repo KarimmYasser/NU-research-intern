@@ -25,10 +25,14 @@ Reference/onboarding documentation for the SESC-2026-02 internship, classified b
 - `guides/` — practical how-to-run guides for the `src/` pipeline.
   - `engineer-user-guide.md` — start here if you just want to *use* the agent
     (mechanical engineers, no coding required).
-  - `developer-guide.md` — architecture, code layout, and how to extend the
-    pipeline.
+  - `developer-guide.md` — the developer entry point; links to the full
+    `development/` reference.
   - `agent-usage-guide.md` — technical CLI/API quickstart; `new-workflow.md` —
     the current working decisions and workflow recap.
+- `development/` — the split-by-concern developer reference for `src/`
+  (architecture/data flow, IR & rendering, orchestration, knowledge layer,
+  validation & preflight, config/LLM/mesh, extension recipes, testing &
+  conventions). Start at `development/README.md`.
 - `training/` — Wolf Dynamics OpenFOAM training decks + general NU orientation PDFs (OpenFOAM 9 — old convention; mind the v13 gap). Tracked via Git LFS.
 
 For the engineering implementation, see `src/` (the Phase II architecture spike) and its `src/README.md`. For overall project context, see the repo `README.md` and `CLAUDE.md`.
