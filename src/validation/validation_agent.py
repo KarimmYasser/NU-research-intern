@@ -74,10 +74,11 @@ class ValidationAgent:
     _CHECKED_MESHES: ClassVar[set[str]] = set()
 
     def __init__(self, image: str = DEFAULT_IMAGE, timeout: float = DEFAULT_TIMEOUT,
-                 nprocs: int = DEFAULT_PROCS):
+                 nprocs: int = DEFAULT_PROCS, check_mesh_all: bool = False):
         self.image = image
         self.timeout = timeout
         self.nprocs = max(1, nprocs)
+        self.check_mesh_all = check_mesh_all or bool(os.environ.get("FOAM_CHECKMESH_ALL", "").strip())
 
     @classmethod
     def clear_mesh_cache(cls) -> None:
@@ -105,13 +106,19 @@ class ValidationAgent:
         errs = [] if ok else self.parse_errors(cp.stdout + cp.stderr, FailureClass.MESH_GENERATION)
         return ValidationResult(ok, "blockMesh", errs, cp.stdout + cp.stderr)
 
-    def run_check_mesh(self, case_dir: Path, force: bool = False) -> ValidationResult:
+    def run_check_mesh(self, case_dir: Path, force: bool = False,
+                       all_checks: bool | None = None) -> ValidationResult:
         key = self._get_mesh_key(case_dir)
         if not force and key and key in self._CHECKED_MESHES:
             return ValidationResult(True, "checkMesh", [], "checkMesh skipped (cached pass for static mesh)")
 
-        # Run OpenFOAM v13 checkMesh with comprehensive topology, geometry and quality checks
-        cp = self._docker_run(case_dir, ["checkMesh", "-allTopology", "-allGeometry", "-meshQuality"])
+        # Run checkMesh. Extra topology/geometry flags are optional to avoid high overhead on large meshes.
+        cmd = ["checkMesh"]
+        use_all = self.check_mesh_all if all_checks is None else all_checks
+        if use_all:
+            cmd.extend(["-allTopology", "-allGeometry", "-meshQuality"])
+
+        cp = self._docker_run(case_dir, cmd)
         out = cp.stdout + cp.stderr
         # checkMesh often exits 0 even on quality failures, so inspect the output:
         # it prints "***" lines and a "Failed N mesh checks." summary on failure.

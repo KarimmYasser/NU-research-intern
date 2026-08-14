@@ -24,15 +24,16 @@ entries at the top. See `src/README.md` for the code layout and
 - **Bypass & Feedback:** Positively validated safe exits bypass downstream rendering and route to `END` with **exit code 2** (prerequisites unmet) alongside a diagnostic banner. Invalid safe exits feed rejection diagnostics back to the LLM until retry budget exhaustion (**exit code 1**).
 - **Public API:** Added `run_pipeline(prompt, ...) -> PipelineResult`.
 
-### 4. Upstream OpenFOAM Foundation v13 Tooling (`src/validation/validation_agent.py`, `docs/architecture/openfoam-v13-capabilities.md`)
-- **`checkMesh` Flags:** Upgraded `run_check_mesh` with `-allTopology -allGeometry -meshQuality` for deep topological diagnostics.
+### 4. Upstream OpenFOAM Foundation v13 Tooling & Configurable Flags
+- **Configurable `checkMesh` Flags (`src/validation/validation_agent.py`, `src/__main__.py`):** Made `-allTopology -allGeometry -meshQuality` optional (defaulting to standard fast `checkMesh`) to prevent timeout overhead on large meshes (e.g. multi-million cell 3D cases). Added `--check-mesh-all` CLI flag and `FOAM_CHECKMESH_ALL` environment variable.
 - **`foamDictionary` & `foamListTimes` Helpers:** Containerized helpers `read_dictionary_entry` and `list_times` for robust syntax assertions and time progression verification.
 - **Three-State Capability Model:** Documented `upstream_available` vs `pipeline_supported` vs `request_supported` in `docs/architecture/openfoam-v13-capabilities.md`.
+- **Environment Template (`.env.example`):** Fully documented all runtime environment variables (`LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL`, `LLM_GATEWAY_API_KEY`, `FOAM_DOCKER_IMAGE`, `FOAM_VALIDATION_TIMEOUT`, `FOAM_VALIDATION_PROCS`, `FOAM_CHECKMESH_ALL`).
 
 ### 5. Code Quality & Dead Code Cleanup
 - Cleaned unused variable assignments, unreferenced imports, and shadowed loop variables.
 - Annotated class variables with `typing.ClassVar` and modernized union and enum type declarations.
-- Verified test suite: **184 unit and integration tests passing in 1.42s**.
+- Verified test suite: **184 unit and integration tests passing in 1.27s**.
 
 ## 2026-08-14 — Pipeline Hardening, Preflight Box Fallback & CLI Flags
 

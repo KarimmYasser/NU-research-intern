@@ -85,6 +85,7 @@ class CaseGraphState(TypedDict, total=False):
     procs: int | None
     timeout: int | None
     image: str | None
+    check_mesh_all: bool | None
 
     attempt: int
     patch_attempt: int
@@ -105,6 +106,8 @@ def _make_validation_agent(state: CaseGraphState) -> ValidationAgent:
         kwargs["timeout"] = timeout
     if (image := state.get("image")) is not None:
         kwargs["image"] = image
+    if (check_mesh_all := state.get("check_mesh_all")) is not None:
+        kwargs["check_mesh_all"] = check_mesh_all
     return ValidationAgent(**kwargs)
 
 
@@ -487,7 +490,8 @@ def build_graph():
 
 def run(nl: str, case_dir: Path, mesh_dir: Path | None = None, config: LLMConfig | None = None,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS, procs: int | None = None,
-        timeout: int | None = None, image: str | None = None) -> CaseGraphState:
+        timeout: int | None = None, image: str | None = None,
+        check_mesh_all: bool | None = None) -> CaseGraphState:
     """Convenience entry point: compile the graph and run it to completion.
 
     `mesh_dir` is optional. When given, the case is built around the provided
@@ -508,13 +512,15 @@ def run(nl: str, case_dir: Path, mesh_dir: Path | None = None, config: LLMConfig
         "procs": procs,
         "timeout": timeout,
         "image": image,
+        "check_mesh_all": check_mesh_all,
     }
     return cast(CaseGraphState, app.invoke(initial))
 
 
 def run_pipeline(nl: str, case_dir: Path, mesh_dir: Path | None = None, config: LLMConfig | None = None,
                  max_attempts: int = DEFAULT_MAX_ATTEMPTS, procs: int | None = None,
-                 timeout: int | None = None, image: str | None = None) -> PipelineResult:
+                 timeout: int | None = None, image: str | None = None,
+                 check_mesh_all: bool | None = None) -> PipelineResult:
     """Execute the case generation graph and return a structured PipelineResult."""
     final_state = run(
         nl=nl,
@@ -525,6 +531,7 @@ def run_pipeline(nl: str, case_dir: Path, mesh_dir: Path | None = None, config: 
         procs=procs,
         timeout=timeout,
         image=image,
+        check_mesh_all=check_mesh_all,
     )
     safe_exit = final_state.get("safe_exit")
     safe_val = final_state.get("safe_exit_validation")

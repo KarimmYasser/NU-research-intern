@@ -70,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="Override solver validation timeout in seconds (defaults to FOAM_VALIDATION_TIMEOUT or 600).")
     run_p.add_argument("--image", default=None,
                        help="Override Docker image (defaults to FOAM_DOCKER_IMAGE or microfluidica/openfoam:13).")
+    run_p.add_argument("--check-mesh-all", action="store_true", default=False,
+                       help="Run checkMesh with -allTopology -allGeometry -meshQuality (defaults to standard checkMesh).")
 
     args = parser.parse_args(argv)
 
@@ -87,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
             procs=args.procs,
             timeout=args.timeout,
             image=args.image,
+            check_mesh_all=args.check_mesh_all,
         )
         result = final_state.get("validation")
         intent_error = final_state.get("intent_error")
