@@ -43,8 +43,8 @@ _KNOWLEDGE_DIR = Path(__file__).resolve().parent
 _R_IDEAL_GAS = 8.314  # J/(mol·K)
 
 
-def _load_json(filename: str) -> dict[str, Any]:
-    path = _KNOWLEDGE_DIR / filename
+def _load_json(filename: str, base_dir: Path = _KNOWLEDGE_DIR) -> dict[str, Any]:
+    path = base_dir / filename
     if not path.is_file():
         return {}
     try:
@@ -73,13 +73,13 @@ class EnvelopeConstraint:
 
     def __init__(self, knowledge_dir: Path | None = None):
         kdir = knowledge_dir or _KNOWLEDGE_DIR
-        raw = _load_json("physical_envelopes.json").get("envelopes", [])
+        raw = _load_json("physical_envelopes.json", base_dir=kdir).get("envelopes", [])
         self._envelopes: dict[str, Envelope] = {
             e["field"]: Envelope(**e) for e in raw
         }
         # species -> mixture block, for deriving the nu envelope from thermo data.
         self._species_thermo: dict[str, dict[str, Any]] = {}
-        for item in _load_json("thermophysics.json").get("thermophysics", []):
+        for item in _load_json("thermophysics.json", base_dir=kdir).get("thermophysics", []):
             key = (item.get("species") or item.get("model_name") or "").lower().strip()
             if key:
                 self._species_thermo[key] = item

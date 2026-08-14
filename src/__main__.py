@@ -31,8 +31,8 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from llm import LLMConfig  # noqa: E402
-from orchestration import graph  # noqa: E402
+from llm import LLMConfig
+from orchestration import graph
 
 
 def _read_prompt(args: argparse.Namespace) -> str:
@@ -90,6 +90,35 @@ def main(argv: list[str] | None = None) -> int:
         )
         result = final_state.get("validation")
         intent_error = final_state.get("intent_error")
+        safe_exit = final_state.get("safe_exit")
+
+        if safe_exit is not None:
+            cat_title = safe_exit.category.value.replace("_", " ").title()
+            print(f"\n{'=' * 70}")
+            print("🚨 SAFE EXIT — HUMAN INTERVENTION REQUIRED")
+            print(f"{'=' * 70}")
+            print(f"Category: {cat_title}")
+            print(f"Summary:  {safe_exit.error_summary}\n")
+            if safe_exit.evidence:
+                print("Verified Evidence:")
+                for ev in safe_exit.evidence:
+                    loc = f" [{ev.file_path}]" if ev.file_path else ""
+                    print(f"  • [{ev.source}]{loc} {ev.detail}")
+                print()
+            if safe_exit.exhausted_alternatives:
+                print("Attempted / Ruled-Out Alternatives:")
+                for alt in safe_exit.exhausted_alternatives:
+                    print(f"  • {alt}")
+                print()
+            if safe_exit.user_action_required:
+                print("What You Need To Do:")
+                for i, act in enumerate(safe_exit.user_action_required, 1):
+                    print(f"  {i}. {act}")
+            print(f"{'=' * 70}")
+            attempt = final_state.get("attempt", 0)
+            print(f"attempts used: {attempt}/{args.max_attempts}")
+            return 2
+
         if intent_error:
             print(f"\nintent extraction failed: {intent_error}")
             is_ok = False

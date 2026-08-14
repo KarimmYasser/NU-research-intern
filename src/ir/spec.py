@@ -17,7 +17,7 @@ patches come from the mesh). Solver: incompressibleFluid with a RAS model.
 
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic import Field as PydanticField
@@ -50,7 +50,7 @@ class ExternalMesh(BaseModel):
     kind: Literal["external_mesh"] = "external_mesh"
 
 
-Geometry = Union[BoxGeometry, ExternalMesh]
+Geometry = BoxGeometry | ExternalMesh
 
 
 # --- boundary conditions --------------------------------------------------

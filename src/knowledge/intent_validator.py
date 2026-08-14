@@ -30,6 +30,12 @@ if TYPE_CHECKING:
 
 import json
 
+from ir.case_types import CASE_TYPES
+from ir.safe_exit import (
+    SafeExitCategory,
+    SafeExitEvidence,
+    SafeExitValidationResult,
+)
 from preflight.ofdict import entries, section, sub_blocks
 
 _KNOWLEDGE_DIR = Path(__file__).resolve().parent
@@ -43,6 +49,11 @@ def _load_json(filename: str) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
+
+
+def _normalize_text(s: str) -> str:
+    """Lowercase and collapse whitespace for resilient substring matching."""
+    return re.sub(r"\s+", " ", s.strip().lower())
 
 
 @dataclass
@@ -86,6 +97,11 @@ class IntentValidator:
         self,
         intent: CaseIntent,
         known_patches: list[MeshPatch] | None = None,
+        prompt_text: str | None = None,
+        validation_result: Any | None = None,
+        preflight_result: Any | None = None,
+        case_dir: Path | str | None = None,
+        remediation_history: list[Any] | None = None,
     ) -> list[IntentValidationError]:
         """Return a list of semantic errors in *intent*.
 
@@ -93,6 +109,20 @@ class IntentValidator:
         Errors are ordered from most to least critical.
         """
         errors: list[IntentValidationError] = []
+
+        # 0. Safe Exit Report validation (if proposed)
+        if intent.safe_exit is not None:
+            errors.extend(self._check_safe_exit(
+                intent=intent,
+                prompt_text=prompt_text,
+                validation_result=validation_result,
+                preflight_result=preflight_result,
+                case_dir=case_dir,
+                remediation_history=remediation_history,
+            ))
+            if errors:
+                return errors  # Halt immediately on safe exit rejection
+            return []  # Valid safe exit passes without requiring patch/field expansion
 
         # 1. Turbulence model
         errors.extend(self._check_turbulence_model(intent))
@@ -316,12 +346,11 @@ class IntentValidator:
         """
         case_type = getattr(intent, "case_type", "incompressibleFluid")
         flow_type = getattr(intent, "flow_type", "incompressible")
-        if not case_type or case_type == "incompressibleFluid":
+        if (not case_type or case_type == "incompressibleFluid") and flow_type == "compressible":
             # Mirror ir.intent._resolve_case_type: a compressible intent with the
             # default family maps to the `fluid` module, whose fvSolution needs
             # the energy-solver entry this check enforces.
-            if flow_type == "compressible":
-                case_type = "fluid"
+            case_type = "fluid"
         compressible = (flow_type == "compressible")
         body = getattr(intent, "custom_fv_solution", "") or ""
         if case_type != "fluid":
@@ -496,7 +525,9 @@ class IntentValidator:
                     )
                 )]
             return []
-        from ir.intent import _assign_faces  # deferred import avoids init-order coupling
+        from ir.intent import (
+            _assign_faces,  # deferred import avoids init-order coupling
+        )
         try:
             _assign_faces(intent.patches)
         except ValueError as e:
@@ -521,3 +552,340 @@ class IntentValidator:
                     )
                 ))
         return errors
+
+    def validate_safe_exit(
+        self,
+        intent: CaseIntent,
+        prompt_text: str | None = None,
+        validation_result: Any | None = None,
+        preflight_result: Any | None = None,
+        case_dir: Path | str | None = None,
+        remediation_history: list[Any] | None = None,
+        attempt: int = 1,
+    ) -> SafeExitValidationResult:
+        """Evaluate a proposed SafeExitReport and return an authoritative result."""
+        from ir.safe_exit import SafeExitValidationResult
+        report = intent.safe_exit
+        if report is None:
+            return SafeExitValidationResult(
+                is_valid=False,
+                rejection_reasons=["No safe_exit was proposed in the CaseIntent."],
+                validated_at_attempt=attempt,
+            )
+
+        errors, verified_ev = self._check_safe_exit_detailed(
+            intent=intent,
+            prompt_text=prompt_text,
+            validation_result=validation_result,
+            preflight_result=preflight_result,
+            case_dir=case_dir,
+            remediation_history=remediation_history,
+        )
+        return SafeExitValidationResult(
+            is_valid=len(errors) == 0,
+            rejection_reasons=[e.message for e in errors],
+            verified_evidence=verified_ev if not errors else [],
+            validated_at_attempt=attempt,
+        )
+
+    def _check_safe_exit(
+        self,
+        intent: CaseIntent,
+        prompt_text: str | None = None,
+        validation_result: Any | None = None,
+        preflight_result: Any | None = None,
+        case_dir: Path | str | None = None,
+        remediation_history: list[Any] | None = None,
+    ) -> list[IntentValidationError]:
+        """Strict, evidence-backed validation for proposed SafeExitReports."""
+        errors, _ = self._check_safe_exit_detailed(
+            intent=intent,
+            prompt_text=prompt_text,
+            validation_result=validation_result,
+            preflight_result=preflight_result,
+            case_dir=case_dir,
+            remediation_history=remediation_history,
+        )
+        return errors
+
+    def _check_safe_exit_detailed(
+        self,
+        intent: CaseIntent,
+        prompt_text: str | None = None,
+        validation_result: Any | None = None,
+        preflight_result: Any | None = None,
+        case_dir: Path | str | None = None,
+        remediation_history: list[Any] | None = None,
+    ) -> tuple[list[IntentValidationError], list[Any]]:
+        """Internal helper returning (errors, verified_evidence)."""
+
+        report = intent.safe_exit
+        if report is None:
+            return [], []
+
+        errors: list[IntentValidationError] = []
+        verified_evidence: list[SafeExitEvidence] = []
+
+        # 1. Structural requirements
+        summary = (report.error_summary or "").strip()
+        if len(summary) < 20:
+            errors.append(IntentValidationError(
+                field="safe_exit.error_summary",
+                message="Safe exit rejected: error_summary must have at least 20 non-whitespace characters explaining the deadlock.",
+            ))
+
+        if not report.evidence:
+            errors.append(IntentValidationError(
+                field="safe_exit.evidence",
+                message="Safe exit rejected: at least one verifiable SafeExitEvidence item is required.",
+            ))
+        else:
+            ev_details = []
+            for i, ev in enumerate(report.evidence):
+                detail = (ev.detail or "").strip()
+                if len(detail) < 15:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.evidence[{i}].detail",
+                        message="Safe exit rejected: evidence detail must have at least 15 non-whitespace characters.",
+                    ))
+                norm = _normalize_text(detail)
+                if norm in ev_details:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.evidence[{i}].detail",
+                        message=f"Safe exit rejected: duplicate evidence item '{detail}'.",
+                    ))
+                ev_details.append(norm)
+
+        if not report.exhausted_alternatives:
+            errors.append(IntentValidationError(
+                field="safe_exit.exhausted_alternatives",
+                message="Safe exit rejected: at least one exhausted alternative or ruled-out remedy must be listed.",
+            ))
+        else:
+            alt_items = []
+            for i, alt in enumerate(report.exhausted_alternatives):
+                alt_str = (alt or "").strip()
+                if len(alt_str) < 15:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.exhausted_alternatives[{i}]",
+                        message="Safe exit rejected: exhausted_alternatives item must have at least 15 characters.",
+                    ))
+                norm = _normalize_text(alt_str)
+                if norm in alt_items:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.exhausted_alternatives[{i}]",
+                        message=f"Safe exit rejected: duplicate exhausted alternative '{alt_str}'.",
+                    ))
+                alt_items.append(norm)
+
+        if not report.user_action_required:
+            errors.append(IntentValidationError(
+                field="safe_exit.user_action_required",
+                message="Safe exit rejected: at least one concrete user action is required to resume the case.",
+            ))
+        else:
+            act_items = []
+            for i, act in enumerate(report.user_action_required):
+                act_str = (act or "").strip()
+                if len(act_str) < 15:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.user_action_required[{i}]",
+                        message="Safe exit rejected: user_action_required item must have at least 15 characters.",
+                    ))
+                norm = _normalize_text(act_str)
+                if norm in act_items:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.user_action_required[{i}]",
+                        message=f"Safe exit rejected: duplicate user action item '{act_str}'.",
+                    ))
+                act_items.append(norm)
+
+        if errors:
+            return errors, []
+
+        # 2. Anti-laziness & Recoverability Rejection Guardrails
+        combined_text = _normalize_text(summary + " " + " ".join(e.detail for e in report.evidence))
+        
+        # Courant / Timestep check:
+        if any(w in combined_text for w in ["courant", "timestep", "delta_t", "deltat"]) and not any(
+            w in combined_text for w in ["negative cell volume", "negative volume", "min volume", "non-manifold", "unclosed", "missing species", "unsupported"]
+        ):
+            errors.append(IntentValidationError(
+                field="safe_exit",
+                message=(
+                    "Safe exit rejected: Courant number and timestep stability are automatically managed by "
+                    "adaptive time-stepping (adjustTimeStep/maxCo/deltaT); adjust intent or velocity instead of exiting."
+                ),
+            ))
+
+        # Relaxation / Stiffness check:
+        if any(w in combined_text for w in ["relaxation factor", "stiffness", "linear solver", "gamg smooth"]) and not any(
+            w in combined_text for w in ["negative cell volume", "negative volume", "min volume", "non-manifold", "unclosed", "missing species", "unsupported"]
+        ):
+            errors.append(IntentValidationError(
+                field="safe_exit",
+                message=(
+                    "Safe exit rejected: Numerical solver stiffness can be resolved using bounded upwind schemes "
+                    "or relaxation factors in fvSolution."
+                ),
+            ))
+
+        # 3. Remediation Attempt IDs Verification (if provided)
+        if report.remediation_attempt_ids and remediation_history is not None:
+            recorded_attempts = {r.attempt for r in remediation_history}
+            for att_id in report.remediation_attempt_ids:
+                if att_id not in recorded_attempts:
+                    errors.append(IntentValidationError(
+                        field="safe_exit.remediation_attempt_ids",
+                        message=f"Safe exit rejected: cited remediation attempt #{att_id} was not found in recorded execution history {sorted(recorded_attempts)}.",
+                    ))
+
+        # 4. Evidence Substring Matching against Trusted Execution State
+        check_mesh_log = ""
+        solver_log = ""
+        if validation_result is not None:
+            stdout = getattr(validation_result, "stdout", "") or ""
+            stderr = getattr(validation_result, "stderr", "") or ""
+            log = getattr(validation_result, "log", "") or ""
+            stage = getattr(validation_result, "stage", "") or ""
+            if stage == "checkMesh" or "checkMesh" in stdout or "checkMesh" in log:
+                check_mesh_log += " " + stdout + " " + stderr + " " + log
+            solver_log += " " + stdout + " " + stderr + " " + log
+            for err in getattr(validation_result, "errors", []):
+                solver_log += f" {err.message} {err.failure_class.name}"
+                if stage == "checkMesh":
+                    check_mesh_log += f" {err.message} {err.failure_class.name}"
+
+        if preflight_result is not None:
+            if hasattr(preflight_result, "as_evidence"):
+                check_mesh_log += " " + preflight_result.as_evidence()
+            if hasattr(preflight_result, "metrics") and preflight_result.metrics is not None:
+                check_mesh_log += " " + (preflight_result.metrics.raw or "")
+                if preflight_result.metrics.min_volume is not None and preflight_result.metrics.min_volume <= 0:
+                    check_mesh_log += f" min volume <= 0 (min_volume={preflight_result.metrics.min_volume})"
+            if hasattr(preflight_result, "audit"):
+                for finding in preflight_result.audit:
+                    check_mesh_log += f" {finding.code} {finding.message}"
+
+        check_mesh_norm = _normalize_text(check_mesh_log)
+        solver_norm = _normalize_text(solver_log)
+        prompt_norm = _normalize_text(prompt_text or "")
+
+        for i, ev in enumerate(report.evidence):
+            norm_detail = _normalize_text(ev.detail)
+            if ev.source == "user_prompt":
+                if prompt_text and norm_detail not in prompt_norm:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.evidence[{i}]",
+                        message=f"Safe exit rejected: Cited evidence was not found in user prompt: '{ev.detail}'.",
+                    ))
+                else:
+                    verified_evidence.append(ev)
+            elif ev.source == "check_mesh":
+                if not check_mesh_norm or norm_detail not in check_mesh_norm:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.evidence[{i}]",
+                        message=f"Safe exit rejected: Cited check_mesh evidence was not found in recorded checkMesh logs: '{ev.detail}'.",
+                    ))
+                else:
+                    verified_evidence.append(ev)
+            elif ev.source == "solver_log":
+                if not solver_norm or norm_detail not in solver_norm:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.evidence[{i}]",
+                        message=f"Safe exit rejected: Cited solver_log evidence was not found in recorded solver logs: '{ev.detail}'.",
+                    ))
+                else:
+                    verified_evidence.append(ev)
+            elif ev.source == "case_file":
+                if not ev.file_path:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.evidence[{i}]",
+                        message="Safe exit rejected: Evidence source 'case_file' requires a relative file_path.",
+                    ))
+                elif Path(ev.file_path).is_absolute() or ".." in Path(ev.file_path).parts:
+                    errors.append(IntentValidationError(
+                        field=f"safe_exit.evidence[{i}]",
+                        message=f"Safe exit rejected: file_path '{ev.file_path}' must be relative within the case directory.",
+                    ))
+                elif case_dir:
+                    case_root = Path(case_dir).resolve()
+                    fpath = (case_root / ev.file_path).resolve()
+                    if not str(fpath).startswith(str(case_root)):
+                        errors.append(IntentValidationError(
+                            field=f"safe_exit.evidence[{i}]",
+                            message=f"Safe exit rejected: file_path '{ev.file_path}' attempts path traversal outside case directory.",
+                        ))
+                    elif not fpath.is_file() or norm_detail not in _normalize_text(fpath.read_text(errors="ignore")):
+                        errors.append(IntentValidationError(
+                            field=f"safe_exit.evidence[{i}]",
+                            message=f"Safe exit rejected: Case file '{ev.file_path}' does not contain cited excerpt: '{ev.detail}'.",
+                        ))
+                    else:
+                        verified_evidence.append(ev)
+
+        # 4. Category-Specific Proof & User Action Requirements
+        cat = report.category
+        actions_norm = _normalize_text(" ".join(report.user_action_required))
+
+        if cat == SafeExitCategory.CORRUPT_OR_UNCLOSED_MESH:
+            fatal_keywords = [
+                "negative cell volume", "negative volume", "min volume <= 0", "min volume < 0",
+                "zero-area face", "zero area face", "collapsed face", "non-manifold",
+                "unclosed boundary", "unclosed surface", "cannot read polymesh",
+                "invalid face topology", "illegal face",
+            ]
+            has_fatal = any(k in combined_text for k in fatal_keywords)
+            has_only_quality = any(k in combined_text for k in ["non-orthogonality", "skewness", "aspect ratio"]) and not has_fatal
+            if not has_fatal or has_only_quality:
+                errors.append(IntentValidationError(
+                    field="safe_exit.category",
+                    message=(
+                        "Safe exit rejected: corrupt_or_unclosed_mesh requires proof of fatal topology/geometry defects "
+                        "(negative cell volumes, zero-area faces, unclosed boundaries). Mesh quality warnings alone (non-orthogonality/skewness) "
+                        "do not justify safe exit."
+                    ),
+                ))
+            if not any(k in actions_norm for k in ["cad", "mesh", "polymesh", "manifold", "watertight", "repair", "re-export", "volume", "geometry"]):
+                errors.append(IntentValidationError(
+                    field="safe_exit.user_action_required",
+                    message="Safe exit rejected: corrupt_or_unclosed_mesh action must instruct user on CAD/mesh repair or re-export.",
+                ))
+
+        elif cat == SafeExitCategory.CONTRADICTORY_PHYSICS:
+            prompt_evs = [e for e in report.evidence if e.source == "user_prompt"]
+            if len(prompt_evs) < 2:
+                errors.append(IntentValidationError(
+                    field="safe_exit.evidence",
+                    message="Safe exit rejected: contradictory_physics requires at least two distinct evidence citations from user_prompt demonstrating the conflict.",
+                ))
+            if not any(k in actions_norm for k in ["choose", "clarify", "select", "specify", "reconcile", "decide", "resolve"]):
+                errors.append(IntentValidationError(
+                    field="safe_exit.user_action_required",
+                    message="Safe exit rejected: contradictory_physics action must ask user to clarify or choose between conflicting parameters.",
+                ))
+
+        elif cat == SafeExitCategory.MISSING_ESSENTIAL_DATA:
+            if not any(k in actions_norm for k in ["provide", "specify", "set", "supply", "input", "value", "units", "concentration", "species", "thermo", "property", "table", "rate", "mechanism"]):
+                errors.append(IntentValidationError(
+                    field="safe_exit.user_action_required",
+                    message="Safe exit rejected: missing_essential_data action must specify the exact missing physical property/data needed.",
+                ))
+
+        elif cat == SafeExitCategory.UNSUPPORTED_PHYSICS:
+            if not any(e.source == "user_prompt" for e in report.evidence):
+                errors.append(IntentValidationError(
+                    field="safe_exit.evidence",
+                    message="Safe exit rejected: unsupported_physics must cite the requested unsupported capability from user_prompt.",
+                ))
+            supported_keys = [
+                "approximation", "case_type", "incompressible", "compressible",
+                "supported", "module", "vof", "euler", *CASE_TYPES.keys()
+            ]
+            if not any(k in actions_norm for k in supported_keys):
+                errors.append(IntentValidationError(
+                    field="safe_exit.user_action_required",
+                    message="Safe exit rejected: unsupported_physics action must suggest a supported solver module or approximation from CASE_TYPES.",
+                ))
+
+        return errors, verified_evidence

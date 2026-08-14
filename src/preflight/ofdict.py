@@ -15,7 +15,6 @@ closest partial answer (or empty) rather than raising.
 from __future__ import annotations
 
 import re
-from typing import Iterator
 
 # Matches the start of a top-level entry: optional whitespace, then a
 # name (word or quoted), then `{`-block, `;`-terminated value, or sub-dict.
@@ -23,17 +22,17 @@ from typing import Iterator
 # (`... } solvers { ... }`), so the name may appear mid-line. The negative
 # lookbehind stops matches inside words/quoted values.
 _SECTION_RE = re.compile(
-    r'(?<![\w"\'])\s*(?P<name>"[^"]+"|[A-Za-z][A-Za-z0-9_]*)\s*(?=\{|;|$)', re.M
+    r'(?<![\w"\'])\s*(?P<name>"[^"]+"|[A-Za-z][A-Za-z0-9_]*)\s*(?=\{|;|$)', re.MULTILINE
 )
 
-_HEADER_RE = re.compile(r"^\s*FoamFile\s*\{", re.M)
-_SEP_RE = re.compile(r"^/\*\*|\*\*/|^//[ */]+\$", re.M)
+_HEADER_RE = re.compile(r"^\s*FoamFile\s*\{", re.MULTILINE)
+_SEP_RE = re.compile(r"^/\*\*|\*\*/|^//[ */]+\$", re.MULTILINE)
 
 
 def strip_comments(text: str) -> str:
     """Remove `// line` and `/* block */` comments that survive the renderer."""
     text = _SEP_RE.sub("", text)
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
     return re.sub(r"//[^\n]*", "", text)
 
 
@@ -166,10 +165,8 @@ def finite_value(raw: str | None) -> float | None:
     v = numbered_value(raw)
     if v is None:
         return None
-    try:
-        return v if (v == v and abs(v) != float("inf")) else None
-    except Exception:
-        return None
+    import math
+    return v if math.isfinite(v) else None
 
 
 def boundary_fields(field_text: str) -> dict[str, dict[str, str]]:

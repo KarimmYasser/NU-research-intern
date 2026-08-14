@@ -25,6 +25,7 @@ from knowledge.rag import KnowledgeRetriever
 _RETRIEVER = KnowledgeRetriever()
 
 from .case_types import CASE_TYPES, CaseTypeDef, get_case_type
+from .safe_exit import SafeExitReport
 from .spec import (
     BoxFace,
     BoxGeometry,
@@ -79,7 +80,7 @@ class CaseIntent(BaseModel):
     geometry: GeometryType = "box"
     box_size: tuple[float, float, float] | None = None  # required if geometry == box
     cells: tuple[int, int, int] = (20, 20, 1)
-    patches: list[PatchIntent]
+    patches: list[PatchIntent] = []
     # --- case-type-specific physics knobs (validated by IntentValidator) ---
     # VoF / multiphase / buoyant: gravity vector, written to constant/g and
     # switching the pressure field to p_rgh.
@@ -105,6 +106,8 @@ class CaseIntent(BaseModel):
     # OpenFOAM solvers demand optional/domain-specific dictionaries we cannot
     # enumerate in advance, so the agent may emit whatever the physics needs.
     extra_files: dict[str, str] = {}  # arbitrary additional case-relative files
+    # Safe Exit proposal when case is genuinely unresolvable under available tools
+    safe_exit: SafeExitReport | None = None
 
 
 # Box face assignment. Canonical map: inlet->xMin, outlet->xMax,
@@ -247,7 +250,6 @@ def _default_bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compr
     if active_fields is None:
         active_fields = ["U", "p"] + (["T", "alphat"] if compressible else []) + (["k", "epsilon", "nut"] if turbulent else [])
 
-    passthrough = {"empty": role, "cyclic": role, "symmetry": "symmetryPlane" if role == "symmetry" else role}
     if role in ("empty", "cyclic", "symmetry"):
         bc_type = "symmetryPlane" if role == "symmetry" else role
         value = "$internalField" if role == "cyclic" else None

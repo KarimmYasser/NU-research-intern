@@ -4,10 +4,10 @@ from . import ir, knowledge, llm, mesh, orchestration, rendering, validation
 
 __all__ = [
     "ir",
-    "rendering",
-    "mesh",
     "knowledge",
-    "validation",
     "llm",
+    "mesh",
     "orchestration",
+    "rendering",
+    "validation",
 ]

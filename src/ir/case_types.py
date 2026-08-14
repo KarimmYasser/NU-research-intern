@@ -36,7 +36,7 @@ alpha.<phase> / per-phase property dictionaries), and the default numerics prese
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 FlowType = Literal["incompressible", "compressible", "solid"]

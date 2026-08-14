@@ -7,7 +7,7 @@ apply physics knowledge, boundary condition mappings, and solver configurations.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ir.intent import CaseIntent, PatchRole
@@ -20,10 +20,10 @@ class BaseSkill:
     name: str = "base_skill"
     description: str = "Base Skill"
 
-    def is_applicable(self, prompt: str, intent: CaseIntent, known_patches: List[MeshPatch] | None = None) -> bool:
+    def is_applicable(self, prompt: str, intent: CaseIntent, known_patches: list[MeshPatch] | None = None) -> bool:
         return False
 
-    def enrich_intent(self, intent: CaseIntent, prompt: str = "", known_patches: List[MeshPatch] | None = None) -> CaseIntent:
+    def enrich_intent(self, intent: CaseIntent, prompt: str = "", known_patches: list[MeshPatch] | None = None) -> CaseIntent:
         return intent
 
 
@@ -38,10 +38,10 @@ class ExternalMeshPatchSkill(BaseSkill):
     name = "external_mesh_patch_mapper"
     description = "Automatically maps boundary patch names from external polyMesh to physics roles."
 
-    def is_applicable(self, prompt: str, intent: CaseIntent, known_patches: List[MeshPatch] | None = None) -> bool:
+    def is_applicable(self, prompt: str, intent: CaseIntent, known_patches: list[MeshPatch] | None = None) -> bool:
         return bool(known_patches)
 
-    def enrich_intent(self, intent: CaseIntent, prompt: str = "", known_patches: List[MeshPatch] | None = None) -> CaseIntent:
+    def enrich_intent(self, intent: CaseIntent, prompt: str = "", known_patches: list[MeshPatch] | None = None) -> CaseIntent:
         if not known_patches:
             return intent
 
@@ -90,14 +90,14 @@ class PromptPressureSkill(BaseSkill):
     name = "prompt_ambient_pressure"
     description = "Extracts an explicit operating/ambient pressure stated in the prompt (e.g. '4 bar', '5 atm') when the intent did not specify one."
 
-    def is_applicable(self, prompt: str, intent: CaseIntent, known_patches: List[MeshPatch] | None = None) -> bool:
+    def is_applicable(self, prompt: str, intent: CaseIntent, known_patches: list[MeshPatch] | None = None) -> bool:
         return (
             intent.flow_type == "compressible"
             and intent.p_ambient == 100000.0  # the LLM didn't pick a value
             and _PRESSURE_RE.search(prompt) is not None
         )
 
-    def enrich_intent(self, intent: CaseIntent, prompt: str = "", known_patches: List[MeshPatch] | None = None) -> CaseIntent:
+    def enrich_intent(self, intent: CaseIntent, prompt: str = "", known_patches: list[MeshPatch] | None = None) -> CaseIntent:
         m = _PRESSURE_RE.search(prompt)
         if m is None:
             return intent
@@ -110,7 +110,7 @@ class SkillRegistry:
     """Registry managing available agent skills."""
 
     def __init__(self):
-        self.skills: List[BaseSkill] = [
+        self.skills: list[BaseSkill] = [
             ExternalMeshPatchSkill(),
             PromptPressureSkill(),
         ]
@@ -118,7 +118,7 @@ class SkillRegistry:
     def register(self, skill: BaseSkill) -> None:
         self.skills.append(skill)
 
-    def apply_skills(self, intent: CaseIntent, prompt: str, known_patches: List[MeshPatch] | None = None) -> CaseIntent:
+    def apply_skills(self, intent: CaseIntent, prompt: str, known_patches: list[MeshPatch] | None = None) -> CaseIntent:
         """Apply all matching skills to refine the extracted CaseIntent."""
         for skill in self.skills:
             if skill.is_applicable(prompt, intent, known_patches):

@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
+from typing import ClassVar
 
 DEFAULT_IMAGE = os.environ.get("FOAM_DOCKER_IMAGE", "microfluidica/openfoam:13")
 DEFAULT_TIMEOUT = int(os.environ.get("FOAM_VALIDATION_TIMEOUT", "600"))  # seconds; foamRun can be slow on large meshes — raise via env if time permits
@@ -70,12 +71,12 @@ class ValidationResult:
 
 
 class ValidationAgent:
-    _CHECKED_MESHES: set[str] = set()
+    _CHECKED_MESHES: ClassVar[set[str]] = set()
 
-    def __init__(self, image: str = DEFAULT_IMAGE, timeout: float | int = DEFAULT_TIMEOUT,
+    def __init__(self, image: str = DEFAULT_IMAGE, timeout: float = DEFAULT_TIMEOUT,
                  nprocs: int = DEFAULT_PROCS):
         self.image = image
-        self.timeout = float(timeout)
+        self.timeout = timeout
         self.nprocs = max(1, nprocs)
 
     @classmethod
@@ -109,7 +110,8 @@ class ValidationAgent:
         if not force and key and key in self._CHECKED_MESHES:
             return ValidationResult(True, "checkMesh", [], "checkMesh skipped (cached pass for static mesh)")
 
-        cp = self._docker_run(case_dir, ["checkMesh"])
+        # Run OpenFOAM v13 checkMesh with comprehensive topology, geometry and quality checks
+        cp = self._docker_run(case_dir, ["checkMesh", "-allTopology", "-allGeometry", "-meshQuality"])
         out = cp.stdout + cp.stderr
         # checkMesh often exits 0 even on quality failures, so inspect the output:
         # it prints "***" lines and a "Failed N mesh checks." summary on failure.
@@ -120,6 +122,30 @@ class ValidationAgent:
             return ValidationResult(True, "checkMesh", [], out)
         return ValidationResult(False, "checkMesh",
                                 self.parse_errors(out, FailureClass.MESH_QUALITY), out)
+
+    def read_dictionary_entry(self, case_dir: Path, dict_path: str, entry: str) -> str | None:
+        """Query an OpenFOAM dictionary entry value using foamDictionary inside the container."""
+        cp = self._docker_run(case_dir, ["foamDictionary", dict_path, "-entry", entry, "-value"])
+        if cp.returncode == 0 and cp.stdout.strip():
+            return cp.stdout.strip()
+        return None
+
+    def list_times(self, case_dir: Path) -> list[str]:
+        """Query recorded time directories using foamListTimes or inspecting case directories."""
+        cp = self._docker_run(case_dir, ["foamListTimes"])
+        if cp.returncode == 0 and cp.stdout.strip():
+            return [line.strip() for line in cp.stdout.splitlines() if line.strip()]
+        # Fallback: scan disk for numeric time directories
+        times: list[str] = []
+        if case_dir.is_dir():
+            for child in case_dir.iterdir():
+                if child.is_dir():
+                    try:
+                        float(child.name)
+                        times.append(child.name)
+                    except ValueError:
+                        continue
+        return sorted(times, key=lambda x: float(x) if x.replace(".", "", 1).isdigit() else 0.0)
 
     def run_solver(self, case_dir: Path) -> ValidationResult:
         if self.nprocs > 1:
@@ -206,7 +232,7 @@ class ValidationAgent:
     # abort the container immediately and (per _find_nan_lines) the failure
     # classifies SOLVER_RUNTIME, routing to build_intent for a physics fix.
     _NAN_RE = re.compile(r"(?:residual|sum local|sum global|cumulative)\s*=\s*-?(?:nan|inf)\b",
-                          re.I)
+                          re.IGNORECASE)
 
     def _docker_run(self, case_dir: Path, args: list[str],
                     stop_on_nan: bool = False) -> subprocess.CompletedProcess:
@@ -307,7 +333,7 @@ class ValidationAgent:
         are the *cause* when the run later times out.
         """
         hits = [ln.strip() for ln in text.splitlines()
-                if re.search(r"=\s*-?nan\b|residual = -?nan|local = -?nan", ln, re.I)]
+                if re.search(r"=\s*-?nan\b|residual = -?nan|local = -?nan", ln, re.IGNORECASE)]
         if not hits:
             return ""
         return "\n".join(hits[:12])
@@ -331,15 +357,15 @@ class ValidationAgent:
         # start of `text`) instead of the actual failure. Report the lines
         # just before the crash (e.g. "Courant Number ... Time = ...", which
         # is usually the actual clue - a divergence) plus the top stack frame.
-        sm = re.search(r"^#0\s+Foam::error::printStack", text, re.M)
+        sm = re.search(r"^#0\s+Foam::error::printStack", text, re.MULTILINE)
         if sm:
             pre_crash = [ln for ln in text[:sm.start()].rstrip().splitlines() if ln.strip()][-6:]
             top_frame = text[sm.start():].splitlines()[0]
-            message = "\n".join(pre_crash + [top_frame])
+            message = "\n".join([*pre_crash, top_frame])
             return [ValidationError(default_class, None, message)]
 
         m = re.search(r"-->\s*FOAM FATAL (IO )?ERROR\s*:?(.*?)(?:\n\s*\n|FOAM exiting|$)",
-                      text, re.S)
+                      text, re.DOTALL)
         is_io = bool(m and m.group(1))
         block = (m.group(2) if m else text).strip()
 

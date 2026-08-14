@@ -15,6 +15,7 @@ renderer itself is case-agnostic.
 from __future__ import annotations
 
 from ir.spec import BoxGeometry, CaseSpec, Field, Patch
+
 from .case import CaseFiles
 
 # The standard OpenFOAM banner (matches the .org v13 tutorials verbatim).
@@ -777,9 +778,9 @@ def _sanitize_dict_body(body: str) -> str:
     """Strip existing FoamFile headers, banners, and footers if present in custom dict bodies."""
     import re as _re
     # Strip leading banner comments
-    cleaned = _re.sub(r"/\*.*?\*/", "", body, flags=_re.S)
+    cleaned = _re.sub(r"/\*.*?\*/", "", body, flags=_re.DOTALL)
     # Strip FoamFile block
-    cleaned = _re.sub(r"FoamFile\s*\{[^}]*\}", "", cleaned, flags=_re.S)
+    cleaned = _re.sub(r"FoamFile\s*\{[^}]*\}", "", cleaned, flags=_re.DOTALL)
     # Strip header/footer separator lines
     cleaned = _re.sub(r"//\s*\*[\s\*]+//", "", cleaned)
     return cleaned.strip()
@@ -983,7 +984,7 @@ def render_phaseproperties(spec: CaseSpec) -> str:
         phase_blocks = []
         for i, ph in enumerate(spec.phases):
             d_model = "isothermal" if ph == "air" else "constant"
-            d_coeffs = f"d0              3e-3;\n        p0              1e5;" if d_model == "isothermal" else f"d               {_num(1e-4)};"
+            d_coeffs = "d0              3e-3;\n        p0              1e5;" if d_model == "isothermal" else f"d               {_num(1e-4)};"
             phase_blocks.append(
                 f"{ph}\n{{\n"
                 "    type            purePhaseModel;\n\n"
@@ -1147,9 +1148,11 @@ def render(spec: CaseSpec) -> CaseFiles:
     case.system["controlDict"] = render_controldict(spec)
     case.system["fvSchemes"] = render_fvschemes(spec)
     case.system["fvSolution"] = render_fvsolution(spec)
-    if spec.case_type in ("incompressibleVoF", "compressibleVoF", "incompressibleMultiphaseVoF", "compressibleMultiphaseVoF"):
-        if "system/setFieldsDict" not in spec.extra_files:
-            case.system["setFieldsDict"] = render_setfieldsdict(spec)
+    if (
+        spec.case_type in ("incompressibleVoF", "compressibleVoF", "incompressibleMultiphaseVoF", "compressibleMultiphaseVoF")
+        and "system/setFieldsDict" not in spec.extra_files
+    ):
+        case.system["setFieldsDict"] = render_setfieldsdict(spec)
     # Physics property layer: base physicalProperties is replaced by per-phase files
     # for VoF/Euler families; solids and films get their own property dictionaries.
     if spec.per_phase_properties:

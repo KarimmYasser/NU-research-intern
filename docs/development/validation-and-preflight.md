@@ -167,7 +167,31 @@ residuals by `Time = ...` step; `predict_from_residuals()` judges by **slope**:
 as `error_feedback` in the graph. The graph routes `FAIL` back to
 `build_intent`; env-skip / PASS / WARN proceeds to the ladder.
 
-## 3. Env vars that tune both
+## 3. Safe Exit Validation & Anti-Laziness Guardrails (`src/ir/safe_exit.py`, `src/knowledge/intent_validator.py`)
+
+When a case is fundamentally unresolvable due to external prerequisites, the agent can trigger a **Safe Exit**. To prevent lazy evasion of recoverable CFD errors (e.g. Courant number timestep adjustments, patch typos, solver under-relaxation), the exit is subject to strict deterministic validation:
+
+### 3.1 Allowed Categories (`SafeExitCategory`)
+- `CORRUPT_OR_UNCLOSED_MESH`: Fatal unclosed mesh topology, severe boundary hole leakage, or non-positive cell volumes (`min_volume <= 0`). Standard quality warnings (high non-orthogonality, skewness) are rejected.
+- `CONTRADICTORY_PHYSICS`: Prompt mandates mutually exclusive constraints (requires $\ge 2$ distinct quotes from `user_prompt`).
+- `MISSING_ESSENTIAL_DATA`: Essential boundary conditions or fluid properties omitted.
+- `UNSUPPORTED_PHYSICS`: Physics requested that is outside supported solver capabilities (grounded in `CASE_TYPES`).
+
+### 3.2 Evidence Ledger & CLI Exit Codes
+- **Evidence Verification:** Quotes and citations must strictly match substrings from trusted execution state (`user_prompt`, `solver_log`, `check_mesh`, or case-relative files).
+- **Exit Code Contract:**
+  - **Code 0**: Case generated and fully validated through ladder.
+  - **Code 1**: Standard unhandled or internal failure (budget exhausted).
+  - **Code 2**: Positively validated Safe Exit (prerequisites unmet).
+
+## 4. Upstream OpenFOAM Foundation v13 Tooling Helpers
+
+The `ValidationAgent` integrates upstream OpenFOAM v13 tools for executable evidence:
+- **`checkMesh -allTopology -allGeometry -meshQuality`**: Deep geometric and topological mesh inspection.
+- **`read_dictionary_entry(case_dir, dict_path, entry)`**: Uses `foamDictionary` inside the container for exact syntax and value queries.
+- **`list_times(case_dir)`**: Uses `foamListTimes` to verify written time step directories beyond $t=0$.
+
+## 5. Env vars that tune both
 
 | Env var | Default | Meaning |
 |---|---|---|
@@ -175,7 +199,7 @@ as `error_feedback` in the graph. The graph routes `FAIL` back to
 | `FOAM_VALIDATION_TIMEOUT` | `600` | wall-clock timeout per docker command (seconds) |
 | `FOAM_VALIDATION_PROCS` | `1` | ranks for `foamRun -parallel` (1 = serial) |
 
-## 4. Gotchas specific to this layer
+## 6. Gotchas specific to this layer
 
 - **`checkMesh` often exits 0 even on quality failures** — `run_check_mesh`
   inspects the output for `***` lines and `"Failed N mesh checks"` rather than

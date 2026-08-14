@@ -21,18 +21,18 @@ from knowledge.intent_validator import IntentValidationError
 
 
 def _intent(**kwargs) -> CaseIntent:
-    defaults = dict(
-        regime="laminar",
-        nu=1e-05,
-        geometry="box",
-        box_size=(0.1, 0.1, 0.1),
-        cells=(20, 20, 1),
-        patches=[
+    defaults = {
+        "regime": "laminar",
+        "nu": 1e-05,
+        "geometry": "box",
+        "box_size": (0.1, 0.1, 0.1),
+        "cells": (20, 20, 1),
+        "patches": [
             PatchIntent(name="in", role="inlet", velocity=(1, 0, 0)),
             PatchIntent(name="out", role="outlet", pressure=0.0),
             PatchIntent(name="walls", role="wall"),
         ],
-    )
+    }
     defaults.update(kwargs)
     return CaseIntent(**defaults)
 
@@ -92,7 +92,7 @@ def test_patch_velocity_rescaled_preserving_direction():
     ])
     constrained, notes, errors = EnvelopeConstraint().apply(intent)
     assert not errors
-    vx, vy, vz = constrained.patches[0].velocity
+    vx, vy, _vz = constrained.patches[0].velocity
     assert pytest.approx((vx * vx + vy * vy) ** 0.5, abs=1e-6) == 1e3
     assert pytest.approx(vx / vy) == 1.0  # direction untouched
     assert notes

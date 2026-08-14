@@ -14,8 +14,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ir.intent import CaseIntent, PatchIntent, intent_to_spec
-from preflight import (audit_case, parse_checkmesh_metrics, parse_residuals,
-                       predict_from_residuals)
+from preflight import (
+    audit_case,
+    parse_checkmesh_metrics,
+    parse_residuals,
+    predict_from_residuals,
+)
 from preflight.metrics import evaluate_mesh_metrics
 from preflight.ofdict import boundary_fields
 from rendering.case import CaseFiles
@@ -153,7 +157,7 @@ def test_audit_flags_patch_not_in_field(tmp_path):
     u = (d / "0" / "U").read_text()
     # Remove the entire 'walls' patch entry from U's boundaryField.
     import re
-    dropped = re.sub(r"\n    walls\n    \{.*?\n    \}\n", "\n", u, flags=re.S)
+    dropped = re.sub(r"\n    walls\n    \{.*?\n    \}\n", "\n", u, flags=re.DOTALL)
     assert "walls" not in boundary_fields(dropped), "sanity: walls must be removed"
     (d / "0" / "U").write_text(dropped)
     findings = audit_case(d)
@@ -176,7 +180,7 @@ def test_audit_flags_loop_block_ddt_mismatch(tmp_path):
     sol = d / "system" / "fvSolution"
     text = sol.read_text()
     import re
-    text = re.sub(r"\nPIMPLE\n\{.*?\n\}\n", "\n", text, flags=re.S)
+    text = re.sub(r"\nPIMPLE\n\{.*?\n\}\n", "\n", text, flags=re.DOTALL)
     text = text.replace(
         "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n",
         "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n\n"

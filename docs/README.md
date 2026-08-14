@@ -12,6 +12,7 @@ Reference/onboarding documentation for the SESC-2026-02 internship, classified b
   - `local-llm-backend-comparison.md` — Ollama vs vLLM vs alternatives.
 - `architecture/` — the Phase II engineering plan and its research threads.
   - `phase-ii-architecture.md` — the structured-IR + deterministic-renderer pipeline plan, validation ladder, and meshing verdict.
+  - `openfoam-v13-capabilities.md` — OpenFOAM Foundation v13 source-grounded capability matrix, executable evidence tooling, controlled remediation registry, and Safe Exit boundaries.
   - `preflight-gate.md` — the cheap fail-fast gate (static audit + checkMesh metrics + dry-run divergence prediction) that runs before the full Docker ladder.
   - `deterministic-constraint-layers.md` — the numeric-envelope constraint layer: LLM numbers are clamped into physically-plausible ranges (species-derived for `nu`) instead of trusted; feeds `src/knowledge/envelopes.py`.
   - `agent-framework-comparison.md` — LangGraph decision and why off-the-shelf agents don't fit.

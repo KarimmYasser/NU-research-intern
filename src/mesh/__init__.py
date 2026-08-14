@@ -4,7 +4,7 @@ from .mesh_io import MeshPatch, copy_polymesh, load_external_mesh, parse_boundar
 
 __all__ = [
     "MeshPatch",
-    "parse_boundary_file",
-    "load_external_mesh",
     "copy_polymesh",
+    "load_external_mesh",
+    "parse_boundary_file",
 ]

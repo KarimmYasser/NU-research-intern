@@ -260,7 +260,8 @@ def _check_solver_entries(solvers: str, findings: list[AuditFinding]) -> None:
     needs `smoother`. A missing key is a DICTIONARY_SYNTAX error caught live in the
     Docker ladder (`keyword smoother is undefined in dictionary solvers/h`).
     """
-    from .ofdict import entries as _entries, sub_blocks
+    from .ofdict import entries as _entries
+    from .ofdict import sub_blocks
     bad: list[str] = []
     for name, body in sub_blocks(solvers):
         e = _entries(body)
@@ -389,7 +390,7 @@ def _mesh_patch_names(boundary_path: Path) -> list[str]:
     names: list[str] = []
     import re as _re
     # boundary file: N ( name { type ...; nFaces ...; startFace ...; } ... )
-    for m in _re.finditer(r'^\s*([A-Za-z][A-Za-z0-9_]*)\s*\{', text, _re.M):
+    for m in _re.finditer(r'^\s*([A-Za-z][A-Za-z0-9_]*)\s*\{', text, _re.MULTILINE):
         # skip the header FoamFile block
         names.append(m.group(1))
     # drop the first "FoamFile" if present
@@ -406,12 +407,12 @@ def _mesh_patch_names(boundary_path: Path) -> list[str]:
 
 def _blockmesh_patch_names(blockmesh_path: Path) -> list[str]:
     text = blockmesh_path.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"boundary\s*\(\s*(.*?)\s*\)\s*;", text, re.S)
+    m = re.search(r"boundary\s*\(\s*(.*?)\s*\)\s*;", text, re.DOTALL)
     if not m:
         return []
     bnd = m.group(1)
     names: list[str] = []
-    for pm in re.finditer(r'^\s*([A-Za-z][A-Za-z0-9_]*)\s*\{', bnd, re.M):
+    for pm in re.finditer(r'^\s*([A-Za-z][A-Za-z0-9_]*)\s*\{', bnd, re.MULTILINE):
         n = pm.group(1)
         if n != "FoamFile":
             names.append(n)
@@ -437,7 +438,6 @@ def _check_thermo_properties(constant: Path, findings: list[AuditFinding]) -> No
     cp = finite_value(next((v for k, v in entries(section(text, "thermo") or "").items()
                             if k in ("Cp", "cp")), None))
     fails: list[str] = []
-    warns: list[str] = []
     if mw is not None and mw <= 0:
         fails.append(f"molWeight {mw} ≤ 0")
     if cp is not None and cp <= 0:

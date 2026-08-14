@@ -22,17 +22,17 @@ from knowledge.intent_validator import IntentValidator
 
 def _make_simple_intent(**overrides) -> CaseIntent:
     """Minimal valid compressible CaseIntent for testing."""
-    data = dict(
-        regime="turbulent",
-        flow_type="compressible",
-        solver_mode="steadyState",
-        geometry="external_mesh",
-        patches=[
+    data = {
+        "regime": "turbulent",
+        "flow_type": "compressible",
+        "solver_mode": "steadyState",
+        "geometry": "external_mesh",
+        "patches": [
             PatchIntent(name="inlet", role="inlet", velocity=(0, 0, -1.0), temperature=300.0),
             PatchIntent(name="outlet", role="outlet", pressure=100000.0),
             PatchIntent(name="walls", role="wall"),
         ],
-    )
+    }
     data.update(overrides)
     return CaseIntent.model_validate(data)
 

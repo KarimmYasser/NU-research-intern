@@ -17,6 +17,7 @@ import orchestration.graph as graph_mod
 from ir import CaseIntent, PatchIntent
 from validation import ValidationResult
 
+
 # A preflight result that always passes, so graph tests don't touch Docker
 # through the preflight gate (they already stub the ladder's run_ladder).
 def _preflight_pass(case_dir, agent=None, dry_run_steps=5):
@@ -64,7 +65,7 @@ def _make_mesh_dir(tmp_path: Path) -> Path:
     return mesh_dir
 
 
-def _fake_intent(nl, config=None, max_retries=3, known_patches=None):
+def _fake_intent(nl, config=None, max_retries=3, known_patches=None, **kwargs):
     assert known_patches is not None and len(known_patches) == 3
     return CaseIntent(
         regime="laminar", nu=1e-5, geometry="external_mesh",
@@ -163,7 +164,7 @@ def test_preflight_case_node_returns_preflight_and_feedback(tmp_path, monkeypatc
 def test_build_intent_surfaces_extraction_failure(monkeypatch):
     """When extract_intent exhausts its inner retries, build_intent returns a
     structured intent_error instead of letting the exception crash LangGraph."""
-    def _boom(nl, config=None, known_patches=None):
+    def _boom(nl, config=None, known_patches=None, **kwargs):
         raise ValueError("Could not extract a valid CaseIntent after 3 tries: bad JSON")
     monkeypatch.setattr(graph_mod, "extract_intent", _boom)
     state = {"nl": "dummy", "attempt": 0, "max_attempts": 3}
@@ -216,7 +217,7 @@ def test_full_run_box_geometry_generates_blockmesh(tmp_path, monkeypatch):
     the full ladder — the box path through the same orchestrator."""
     case_dir = tmp_path / "case"
 
-    def _box_intent(nl, config=None, max_retries=3, known_patches=None):
+    def _box_intent(nl, config=None, max_retries=3, known_patches=None, **kwargs):
         assert known_patches == []  # no external mesh -> no known patch names
         return CaseIntent(
             regime="laminar", nu=1e-5, geometry="box", box_size=(0.1, 0.1, 0.1),

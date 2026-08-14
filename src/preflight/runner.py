@@ -122,16 +122,16 @@ def _bounded_foamrun(case_dir: Path, agent: ValidationAgent, steps: int):
     try:
         if original is None:
             raise FileNotFoundError("controlDict missing — cannot bound the dry run")
-        delta_m = re.search(r"^\s*deltaT\s+([-\d.eE+]+);", original, re.M)
-        start_m = re.search(r"^\s*startTime\s+([-\d.eE+]+);", original, re.M)
+        delta_m = re.search(r"^\s*deltaT\s+([-\d.eE+]+);", original, re.MULTILINE)
+        start_m = re.search(r"^\s*startTime\s+([-\d.eE+]+);", original, re.MULTILINE)
         delta = float(delta_m.group(1)) if delta_m else 1.0
         start = float(start_m.group(1)) if start_m else 0.0
         new_end = start + steps * delta
-        patched = re.sub(r"^\s*endTime\s+[-\d.eE+]+;", f"endTime         {new_end:g};", original, count=1, flags=re.M)
+        patched = re.sub(r"^\s*endTime\s+[-\d.eE+]+;", f"endTime         {new_end:g};", original, count=1, flags=re.MULTILINE)
         # Keep a valid writeControl and push writeInterval past the dry-run
         # horizon so no time directories are written.
-        patched = re.sub(r"^\s*writeControl\s+\S+;", "writeControl   timeStep;", patched, count=1, flags=re.M)
-        patched = re.sub(r"^\s*writeInterval\s+[-\d.eE+]+;", f"writeInterval  {steps * 1000000:d};", patched, count=1, flags=re.M)
+        patched = re.sub(r"^\s*writeControl\s+\S+;", "writeControl   timeStep;", patched, count=1, flags=re.MULTILINE)
+        patched = re.sub(r"^\s*writeInterval\s+[-\d.eE+]+;", f"writeInterval  {steps * 1000000:d};", patched, count=1, flags=re.MULTILINE)
         control.write_text(patched, encoding="utf-8")
         return agent.run_solver(case_dir)
     finally:

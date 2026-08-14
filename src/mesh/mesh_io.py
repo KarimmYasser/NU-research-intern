@@ -25,7 +25,7 @@ from pathlib import Path
 _POLYMESH_FILES = ("points", "faces", "owner", "neighbour", "boundary")
 
 _PATCH_BLOCK_RE = re.compile(
-    r"(\w+)\s*\{\s*([^{}]*?)\s*\}", re.S
+    r"(\w+)\s*\{\s*([^{}]*?)\s*\}", re.DOTALL
 )
 _KEY_RE = re.compile(r"(\w+)\s+([^;]+);")
 
@@ -46,9 +46,9 @@ def parse_boundary_file(path: Path) -> list[MeshPatch]:
     """
     text = path.read_text(errors="replace")
     text = re.sub(r"//[^\n]*", "", text)  # line comments
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)  # block comments
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)  # block comments
     # Drop the FoamFile{...} header so it can't be mistaken for a patch block.
-    text = re.sub(r"FoamFile\s*\{.*?\}", "", text, flags=re.S)
+    text = re.sub(r"FoamFile\s*\{.*?\}", "", text, flags=re.DOTALL)
 
     patches: list[MeshPatch] = []
     for name, body in _PATCH_BLOCK_RE.findall(text):

@@ -4,6 +4,36 @@ Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
 `docs/architecture/phase-ii-architecture.md` for the design this validates.
 
+## 2026-08-14 — Evidence-Backed Safe Exit, OpenFOAM Foundation v13 Capability Alignment & Code Quality
+
+**Focus:** Safe exit anti-laziness guardrails, OpenFOAM Foundation v13 diagnostic tool integration, graph ledger tracking, CLI exit-code contract, and full codebase dead-code and quality audit.
+
+### 1. Structured Safe Exit IR & Verifiable Evidence Contract (`src/ir/safe_exit.py`)
+- **SafeExitCategory:** Defined 4 deterministic categories: `CORRUPT_OR_UNCLOSED_MESH`, `CONTRADICTORY_PHYSICS`, `MISSING_ESSENTIAL_DATA`, `UNSUPPORTED_PHYSICS`.
+- **SafeExitEvidence:** Required every claim to point to an authoritative source (`solver_log`, `check_mesh`, `user_prompt`, `case_file`) with exact, verifiable normalized substrings and case-relative path isolation.
+- **RemediationAttempt & SafeExitValidationResult:** Structured remediation history tracking (`attempt`, `issue_class`, `action`, `configuration_changes`, `outcome`) and formal validation results (`is_valid`, `rejection_reasons`, `verified_evidence`).
+
+### 2. Deterministic Anti-Laziness Guardrails (`src/knowledge/intent_validator.py`)
+- **Strict Evidence Verification:** Validated evidence references against recorded remediation history, raw user prompts, solver stdout/stderr logs, checkMesh logs, and numeric preflight metrics.
+- **Anti-Laziness Filter Rules:** Rejected recoverable parameters from triggering safe exits (e.g. Courant/deltaT warnings, solver relaxation factors, patch typos, non-orthogonality/skewness quality warnings). Only non-positive cell volumes (`min_volume <= 0`) or fatal unclosed topology qualify for mesh exits.
+- **Contradictory Physics:** Required $\ge 2$ distinct quotes demonstrating mutually exclusive requirements.
+- **Unsupported Physics:** Grounded against the `CASE_TYPES` registry.
+
+### 3. Graph Routing & CLI Contract (`src/orchestration/graph.py`, `src/__main__.py`)
+- **Deterministic Ledger:** `CaseGraphState` tracks `remediation_history`, `safe_exit_validation`, and retry counters.
+- **Bypass & Feedback:** Positively validated safe exits bypass downstream rendering and route to `END` with **exit code 2** (prerequisites unmet) alongside a diagnostic banner. Invalid safe exits feed rejection diagnostics back to the LLM until retry budget exhaustion (**exit code 1**).
+- **Public API:** Added `run_pipeline(prompt, ...) -> PipelineResult`.
+
+### 4. Upstream OpenFOAM Foundation v13 Tooling (`src/validation/validation_agent.py`, `docs/architecture/openfoam-v13-capabilities.md`)
+- **`checkMesh` Flags:** Upgraded `run_check_mesh` with `-allTopology -allGeometry -meshQuality` for deep topological diagnostics.
+- **`foamDictionary` & `foamListTimes` Helpers:** Containerized helpers `read_dictionary_entry` and `list_times` for robust syntax assertions and time progression verification.
+- **Three-State Capability Model:** Documented `upstream_available` vs `pipeline_supported` vs `request_supported` in `docs/architecture/openfoam-v13-capabilities.md`.
+
+### 5. Code Quality & Dead Code Cleanup
+- Cleaned unused variable assignments, unreferenced imports, and shadowed loop variables.
+- Annotated class variables with `typing.ClassVar` and modernized union and enum type declarations.
+- Verified test suite: **184 unit and integration tests passing in 1.42s**.
+
 ## 2026-08-14 — Pipeline Hardening, Preflight Box Fallback & CLI Flags
 
 **Focus:** End-to-end pipeline robustness, non-blocking timeout handling in Docker, static preflight coverage for box cases, CLI execution controls, and dictionary header deduplication.
@@ -395,3 +425,31 @@ pattern for stack-trace-style crashes.
    a real chance of getting past the first timestep.
 3. Re-run with `--max-attempts 2` (or 3) once the above are in so the
    self-correction loop actually sees the real error and can act on it.
+
+---
+
+### Session: 2026-08-14 — Safe Exit Protocol & Deterministic Evidence Validation Engine
+
+**Goal:** Implement a verifiable Safe Exit escape hatch allowing the LLM agent to gracefully terminate with structured human intervention requests (exit code 2) when encountering genuinely unresolvable physical/topological blockers, while implementing strict deterministic anti-laziness guardrails to prevent escaping recoverable numerical/syntax errors.
+
+**Key Deliverables & Architectural Contracts:**
+1. **Safe Exit Data Models & Return Types (`src/ir/safe_exit.py`):**
+   - `SafeExitCategory`: 4 strict unresolvable failure classes (`CORRUPT_OR_UNCLOSED_MESH`, `CONTRADICTORY_PHYSICS`, `MISSING_ESSENTIAL_DATA`, `UNSUPPORTED_PHYSICS`).
+   - `SafeExitEvidence`: Strict provenance tracking (`source`: `user_prompt`, `check_mesh`, `solver_log`, `case_file`).
+   - `SafeExitReport`: Structured terminal report requiring `category`, `error_summary`, `evidence`, `exhausted_alternatives`, `user_action_required`, and optional `remediation_attempt_ids`.
+   - `RemediationAttempt`: Authoritative execution ledger tracking issue class, action, configuration changes, outcome, and evidence reference.
+   - `SafeExitValidationResult`: Deterministic verification contract returning `is_valid`, `rejection_reasons`, `verified_evidence`, and `validated_at_attempt`.
+   - `PipelineResult`: Programmatic CLI and API terminal contract returning `success`, `exit_code`, `safe_exit`, `safe_exit_validation`, `remediation_history`, etc.
+2. **Deterministic Evidence Validator (`src/knowledge/intent_validator.py`):**
+   - Anti-laziness filters rejecting Courant, timestep, under-relaxation, and scheme stiffness excuses.
+   - Path-traversal protection on `case_file` citations enforcing containment within `case_dir`.
+   - Exact normalized substring verification against trusted execution state (solver stdout/stderr, checkMesh logs, preflight findings, raw user prompt).
+   - Fatal topology filtering on `CORRUPT_OR_UNCLOSED_MESH`: requires fatal defects (negative cell volume, zero-area faces, unclosed boundary, non-manifold); rejects non-orthogonality/skewness quality warnings.
+   - Grounded capability validation on `UNSUPPORTED_PHYSICS` against `CASE_TYPES` registry.
+   - Multi-point evidence requirement on `CONTRADICTORY_PHYSICS` ($\ge 2$ distinct quotes).
+3. **Graph Orchestration & CLI Contract (`src/orchestration/graph.py`, `src/__main__.py`):**
+   - Graph state tracking for `remediation_history`, `safe_exit_validation`, and `invalid_safe_exit_count`.
+   - Positive validation bypasses downstream execution and routes to `END`.
+   - Rejected safe exits consume retry budget with targeted diagnostic feedback, falling back to exit code 1 if budget exhausted.
+   - CLI prints high-visibility diagnostic banner and terminates with exit code 2 on valid safe exits.
+

@@ -24,7 +24,7 @@ from pathlib import Path
 _SOLVE_RE = re.compile(
     r"Solving for\s+(?P<field>\w+),\s*Initial residual\s*=\s*(?P<init>[-\w.]+|[+-]?nan|inf|[-+]?inf),"
 )
-_TIME_RE = re.compile(r"^\s*Time\s*=\s*(?P<t>\S+)", re.M)
+_TIME_RE = re.compile(r"^\s*Time\s*=\s*(?P<t>\S+)", re.MULTILINE)
 
 # Slope bands on log10(initial residual) vs step index. A residual that decays
 # by ≥ ~12% per step is genuinely converging (slope ≤ -0.05); one that grows by
@@ -99,20 +99,20 @@ def predict_from_residuals(steps: list[dict[str, float]], n_steps: int) -> DryRu
 
     # Any non-finite residual anywhere => already diverged (or about to).
     for step in steps:
-        for field, val in step.items():
+        for f_name, val in step.items():
             if not math.isfinite(val):
                 return DryRunPrediction(
                     "FAIL", n_steps,
-                    message=f"{field}: initial residual went non-finite (nan/inf) — "
+                    message=f"{f_name}: initial residual went non-finite (nan/inf) — "
                             "diverged during the dry run")
 
     # Per-field series aligned to step index (missing -> nan).
     fields_series: dict[str, list[float]] = {}
     for step in steps:
-        for field in step:
-            fields_series.setdefault(field, [math.nan] * len(steps))
-    for field in fields_series:
-        fields_series[field] = [step.get(field, math.nan) for step in steps]
+        for f_name in step:
+            fields_series.setdefault(f_name, [math.nan] * len(steps))
+    for f_name in fields_series:
+        fields_series[f_name] = [step.get(f_name, math.nan) for step in steps]
 
     trend_lines: list[str] = []
     worst = "PASS"
@@ -126,24 +126,24 @@ def predict_from_residuals(steps: list[dict[str, float]], n_steps: int) -> DryRu
     slopes: dict[str, float] = {}
     peaks: dict[str, float] = {}
     series_map: dict[str, list[float]] = {}
-    for field, series in fields_series.items():
+    for f_name, series in fields_series.items():
         clean = [v for v in series if math.isfinite(v)]
-        series_map[field] = clean
+        series_map[f_name] = clean
         if len(clean) >= 2:
-            slopes[field] = _log_slope(clean)
-            peaks[field] = max(clean)
+            slopes[f_name] = _log_slope(clean)
+            peaks[f_name] = max(clean)
     any_decaying = any(slopes.get(f, 0.0) <= DECAY_SLOPE for f in fields_series)
 
-    for field, series in sorted(series_map.items()):
+    for f_name, series in sorted(series_map.items()):
         if len(series) < 2:
-            trend_lines.append(f"{field}: {len(series)} data point(s) — insufficient to judge")
+            trend_lines.append(f"{f_name}: {len(series)} data point(s) — insufficient to judge")
             worst = "WARN" if worst == "PASS" else worst
             continue
-        slope = slopes[field]
-        trailing = f" -> ".join(f"{v:.3g}" for v in series)
+        slope = slopes[f_name]
+        trailing = " -> ".join(f"{v:.3g}" for v in series)
         # Already at the machine floor: converged, flat is fine.
         if series[-1] <= CONVERGED_ABS:
-            trend_lines.append(f"{field}: converged ({trailing}) — OK")
+            trend_lines.append(f"{f_name}: converged ({trailing}) — OK")
             continue
         # Fail: a rise to a substantial magnitude is unambiguous divergence.
         # A rise at modest magnitude is only diverging when NOTHING else is
@@ -151,18 +151,18 @@ def predict_from_residuals(steps: list[dict[str, float]], n_steps: int) -> DryRu
         # (cavity live run) and is downgraded to WARN so the source-of-truth
         # ladder gets to decide instead of wasting a build_intent retry.
         if slope >= RISE_SLOPE:
-            peak = peaks[field]
+            peak = peaks[f_name]
             if peak >= RISING_MAGNITUDE or not any_decaying:
-                trend_lines.append(f"{field}: RISING (log-slope +{slope:.2f}/step, peak {peak:.3g}, {trailing}) — divergence predicted")
+                trend_lines.append(f"{f_name}: RISING (log-slope +{slope:.2f}/step, peak {peak:.3g}, {trailing}) — divergence predicted")
                 worst = "FAIL"
                 last_field_rise += 1
             else:
-                trend_lines.append(f"{field}: rising but small (log-slope +{slope:.2f}/step, peak {peak:.3g}) — coupling transient, not yet diverging")
+                trend_lines.append(f"{f_name}: rising but small (log-slope +{slope:.2f}/step, peak {peak:.3g}) — coupling transient, not yet diverging")
                 worst = "WARN" if worst == "PASS" else worst
         elif slope <= DECAY_SLOPE:
-            trend_lines.append(f"{field}: decaying (log-slope {slope:.2f}/step, {trailing}) — OK")
+            trend_lines.append(f"{f_name}: decaying (log-slope {slope:.2f}/step, {trailing}) — OK")
         else:
-            trend_lines.append(f"{field}: flat/stalled (log-slope {slope:+.2f}/step, {trailing}) — not yet converging")
+            trend_lines.append(f"{f_name}: flat/stalled (log-slope {slope:+.2f}/step, {trailing}) — not yet converging")
             worst = "WARN" if worst == "PASS" else worst
 
     if worst == "FAIL":

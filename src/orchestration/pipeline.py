@@ -16,6 +16,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
@@ -54,7 +55,14 @@ _SCHEMA = """{
         "<field>": {"type": "<bcType>", "<key>": "<value>", ...}
       }
     }
-  ]
+  ],
+  "safe_exit": {                                     // OPTIONAL: ONLY if case is genuinely unresolvable under available tools
+    "category": "corrupt_or_unclosed_mesh" | "contradictory_physics" | "missing_essential_data" | "unsupported_physics",
+    "error_summary": string,                         // min 20 chars explaining exact deadlock
+    "evidence": [{"source": "solver_log" | "check_mesh" | "user_prompt" | "case_file", "detail": string, "file_path": string}],
+    "exhausted_alternatives": [string],              // min 1 item, min 15 chars
+    "user_action_required": [string]                 // min 1 item, min 15 chars, concrete user steps
+  }
 }"""
 
 _EXAMPLE = """Example — "Lid-driven cavity: 0.1m square box, top wall slides at 1 m/s, other
@@ -89,6 +97,12 @@ When to use turbulence_model:
 - External aerodynamics / thin boundary layer: SpalartAllmaras
 - Swirling / recirculating flows: realizableKE or RNGkEpsilon
 - Default general: kEpsilon
+
+Safe Exit Guidelines:
+ONLY propose a safe_exit if the case is genuinely unresolvable (e.g. fatal negative volume mesh,
+directly contradictory prompt requirements, missing essential data). The validator verifies cited evidence
+strictly against run logs. Courant timesteps, patch typos, and solver relaxation are recoverable and
+will be rejected if proposed as safe_exit.
 """
 
 _SYSTEM = (
@@ -158,8 +172,33 @@ _RESPONSE_FORMAT = {
                         "required": ["name", "role"],
                     },
                 },
+                "safe_exit": {
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "enum": ["corrupt_or_unclosed_mesh", "contradictory_physics", "missing_essential_data", "unsupported_physics"],
+                        },
+                        "error_summary": {"type": "string"},
+                        "evidence": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "source": {"type": "string", "enum": ["solver_log", "check_mesh", "user_prompt", "case_file"]},
+                                    "detail": {"type": "string"},
+                                    "file_path": {"type": "string"},
+                                },
+                                "required": ["source", "detail"],
+                            },
+                        },
+                        "exhausted_alternatives": {"type": "array", "items": {"type": "string"}},
+                        "user_action_required": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["category", "error_summary", "evidence", "exhausted_alternatives", "user_action_required"],
+                },
             },
-            "required": ["regime", "geometry", "patches"],
+            "required": ["regime", "geometry"],
         },
     },
 }
@@ -261,7 +300,11 @@ def _chat_create(client, config: LLMConfig, messages: list[dict], response_forma
 
 
 def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 3,
-                    known_patches: list[MeshPatch] | None = None) -> CaseIntent:
+                   known_patches: list[MeshPatch] | None = None,
+                   validation_result: Any | None = None,
+                   preflight_result: Any | None = None,
+                   case_dir: Path | str | None = None,
+                   remediation_history: list[Any] | None = None) -> CaseIntent:
     """NL -> validated CaseIntent with RAG context grounding and Skill enrichment.
 
     Validation is three-stage (fast inner loop, no Docker):
@@ -270,7 +313,8 @@ def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 
          plausible ranges (nu, p_ambient, temperature, velocities, pressures,
          box_size, cells); unit-error outliers are fed back to the LLM.
       2. IntentValidator semantic check — BC types, required BC keys, field
-         applicability, turbulence model name, relaxation factor ranges.
+         applicability, turbulence model name, relaxation factor ranges, and
+         evidence-backed SafeExitReport verification.
     All failure modes are fed back to the LLM in the same retry loop.
     """
     from knowledge.envelopes import EnvelopeConstraint
@@ -305,6 +349,38 @@ def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 
             ]
             continue
 
+        # If a SafeExit was proposed, validate it directly against execution state and logs
+        if intent.safe_exit is not None:
+            print("      -> [Safe Exit] Validating proposed SafeExitReport against execution state...", flush=True)
+            safe_exit_errors = validator.validate(
+                intent,
+                known_patches=known_patches,
+                prompt_text=nl,
+                validation_result=validation_result,
+                preflight_result=preflight_result,
+                case_dir=case_dir,
+                remediation_history=remediation_history,
+            )
+            if safe_exit_errors:
+                err_lines = "\n".join(f"- {e}" for e in safe_exit_errors)
+                last_err = err_lines
+                print(f"      -> [Safe Exit] Proposal REJECTED with {len(safe_exit_errors)} error(s):", flush=True)
+                for err in safe_exit_errors:
+                    print(f"         * {err}", flush=True)
+                messages += [
+                    {"role": "assistant", "content": raw},
+                    {"role": "user",
+                     "content": (
+                         f"Your proposed safe_exit was REJECTED by the validation engine:\n"
+                         f"{err_lines}\n"
+                         "You must continue solving the CFD problem or provide strict, verified evidence. "
+                         "Return only the corrected JSON object."
+                     )},
+                ]
+                continue
+            print(f"      -> [Safe Exit] Proposal VALIDATED: [{intent.safe_exit.category.value}] {intent.safe_exit.error_summary}", flush=True)
+            return intent
+
         # Stage 1.5: deterministic physical-envelope constraint. Clamp numbers
         # into plausible ranges; reject only unit/dimension-level outliers.
         intent, env_notes, env_errors = envelope.apply(intent)
@@ -329,7 +405,14 @@ def extract_intent(nl: str, config: LLMConfig | None = None, max_retries: int = 
 
         # Stage 2: deterministic semantic validation against knowledge registries.
         print("      -> [Stage 2/2] Running IntentValidator against OpenFOAM registries...", flush=True)
-        semantic_errors = validator.validate(intent, known_patches=known_patches)
+        semantic_errors = validator.validate(
+            intent,
+            known_patches=known_patches,
+            prompt_text=nl,
+            validation_result=validation_result,
+            preflight_result=preflight_result,
+            case_dir=case_dir,
+        )
         if semantic_errors:
             err_lines = "\n".join(f"- {e}" for e in semantic_errors)
             last_err = err_lines

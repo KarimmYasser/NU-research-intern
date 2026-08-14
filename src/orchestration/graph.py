@@ -34,11 +34,18 @@ Two input modes:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, TypedDict, cast
+from typing import cast
 
 from langgraph.graph import END, StateGraph
+from typing_extensions import TypedDict
 
 from ir.intent import CaseIntent, intent_to_spec
+from ir.safe_exit import (
+    PipelineResult,
+    RemediationAttempt,
+    SafeExitReport,
+    SafeExitValidationResult,
+)
 from ir.spec import CaseSpec
 from llm.llm_client import LLMConfig
 from mesh.mesh_io import MeshPatch, copy_polymesh, load_external_mesh
@@ -46,8 +53,12 @@ from preflight import PreflightResult, PreflightVerdict
 from preflight.runner import run_preflight_with_agent
 from rendering.case import CaseFiles, apply_file_overrides
 from rendering.renderer import render
-from validation.validation_agent import (DEFAULT_PROCS, FailureClass,
-                                         ValidationAgent, ValidationResult)
+from validation.validation_agent import (
+    FailureClass,
+    ValidationAgent,
+    ValidationResult,
+)
+
 from .pipeline import extract_file_patches, extract_intent
 
 DEFAULT_MAX_ATTEMPTS = 3
@@ -55,27 +66,31 @@ DEFAULT_MAX_ATTEMPTS = 3
 
 class CaseGraphState(TypedDict, total=False):
     nl: str  # the user's natural-language problem statement
-    mesh_dir: Optional[str]  # path to an externally-provided mesh (box geometry if absent)
+    mesh_dir: str | None  # path to an externally-provided mesh (box geometry if absent)
     case_dir: str  # where to write the rendered case
-    config: Optional[LLMConfig]
+    config: LLMConfig | None
 
     known_patches: list[MeshPatch]
     intent: CaseIntent
+    safe_exit: SafeExitReport | None  # populated when case is validated as genuinely unresolvable
+    safe_exit_validation: SafeExitValidationResult | None  # authoritative validation record
+    remediation_history: list[RemediationAttempt]  # ledger of attempted remedies
+    invalid_safe_exit_count: int  # count of rejected safe exit proposals
     spec: CaseSpec
     case_files: CaseFiles
-    file_overrides: Optional[dict[str, str]]  # direct target file content patches from agent
+    file_overrides: dict[str, str] | None  # direct target file content patches from agent
     validation: ValidationResult
     preflight: PreflightResult  # Level A/B/C preflight gate result (set by preflight_case)
 
-    procs: Optional[int]
-    timeout: Optional[int]
-    image: Optional[str]
+    procs: int | None
+    timeout: int | None
+    image: str | None
 
     attempt: int
     patch_attempt: int
     max_attempts: int
-    error_feedback: Optional[str]  # last validation failure, fed back to extract_intent
-    intent_error: Optional[str]  # structured error when extract_intent couldn't produce an intent
+    error_feedback: str | None  # last validation failure, fed back to extract_intent
+    intent_error: str | None  # structured error when extract_intent couldn't produce an intent
     patch_stats: dict[str, int]  # {"attempts": N, "resolved": M} — targeted-patch success tracking
     done: bool
 
@@ -84,12 +99,12 @@ class CaseGraphState(TypedDict, total=False):
 
 def _make_validation_agent(state: CaseGraphState) -> ValidationAgent:
     kwargs: dict = {}
-    if state.get("procs") is not None:
-        kwargs["nprocs"] = state["procs"]
-    if state.get("timeout") is not None:
-        kwargs["timeout"] = state["timeout"]
-    if state.get("image") is not None:
-        kwargs["image"] = state["image"]
+    if (procs := state.get("procs")) is not None:
+        kwargs["nprocs"] = procs
+    if (timeout := state.get("timeout")) is not None:
+        kwargs["timeout"] = timeout
+    if (image := state.get("image")) is not None:
+        kwargs["image"] = image
     return ValidationAgent(**kwargs)
 
 
@@ -154,7 +169,15 @@ def build_intent(state: CaseGraphState) -> dict:
         print(f"\n[2/5] Querying LLM to build CaseIntent (Attempt {attempt}/{max_attempts})...", flush=True)
     known = state.get("known_patches")
     try:
-        intent = extract_intent(nl, state.get("config"), known_patches=known)
+        intent = extract_intent(
+            nl,
+            state.get("config"),
+            known_patches=known,
+            validation_result=state.get("validation"),
+            preflight_result=state.get("preflight"),
+            case_dir=state.get("case_dir"),
+            remediation_history=state.get("remediation_history"),
+        )
     except ValueError as exc:
         # Inner extract_intent loop exhausted (≤3 LLM repair attempts) without
         # producing a valid CaseIntent. Surfacing a structured failure (rather
@@ -167,6 +190,42 @@ def build_intent(state: CaseGraphState) -> dict:
             "patch_attempt": 0,
             "file_overrides": None,
         }
+
+    if intent.safe_exit is not None:
+        from knowledge.intent_validator import IntentValidator
+        validator = IntentValidator()
+        safe_val = validator.validate_safe_exit(
+            intent,
+            prompt_text=nl,
+            validation_result=state.get("validation"),
+            preflight_result=state.get("preflight"),
+            case_dir=state.get("case_dir"),
+            remediation_history=state.get("remediation_history"),
+            attempt=attempt,
+        )
+        if safe_val.is_valid:
+            print(f"      -> Agent proposed validated Safe Exit: [{intent.safe_exit.category.value}] {intent.safe_exit.error_summary}", flush=True)
+            return {
+                "intent": intent,
+                "safe_exit": intent.safe_exit,
+                "safe_exit_validation": safe_val,
+                "attempt": attempt,
+                "patch_attempt": 0,
+                "file_overrides": None,
+                "done": True,
+            }
+        else:
+            inv_count = state.get("invalid_safe_exit_count", 0) + 1
+            print(f"      -> Proposed Safe Exit rejected ({len(safe_val.rejection_reasons)} reason(s)): {safe_val.rejection_reasons}", flush=True)
+            if attempt >= max_attempts:
+                return {
+                    "intent_error": f"Invalid safe exit proposal exhausted retry budget: {'; '.join(safe_val.rejection_reasons)}",
+                    "safe_exit_validation": safe_val,
+                    "invalid_safe_exit_count": inv_count,
+                    "attempt": attempt,
+                    "done": False,
+                }
+
     print(f"      -> Extracted intent (flow_type={intent.flow_type}, regime={intent.regime}, species={intent.fluid_species}, turb_model={intent.turbulence_model or 'kEpsilon'})", flush=True)
     if intent.custom_fv_solution:
         print("      -> Agent specified custom fvSolution relaxation/solvers", flush=True)
@@ -181,12 +240,12 @@ def build_intent(state: CaseGraphState) -> dict:
 
 def expand_spec(state: CaseGraphState) -> dict:
     """Deterministic CaseIntent -> CaseSpec expansion (intent.intent_to_spec)."""
-    print(f"\n[3/5] Expanding CaseIntent into CaseSpec (RAG & thermophysical lookup)...", flush=True)
+    print("\n[3/5] Expanding CaseIntent into CaseSpec (RAG & thermophysical lookup)...", flush=True)
     intent = state.get("intent")
     if intent is None:
         raise ValueError("Missing intent in CaseGraphState")
     spec = intent_to_spec(intent)
-    print(f"      -> Expanded spec successfully.", flush=True)
+    print("      -> Expanded spec successfully.", flush=True)
     return {"spec": spec}
 
 
@@ -217,7 +276,7 @@ def render_case(state: CaseGraphState) -> dict:
             print(f"      -> skipped {len(skipped)} nested/illegal override(s) not applied as whole files",
                   flush=True)
 
-    print(f"      -> Rendered case files written successfully.", flush=True)
+    print("      -> Rendered case files written successfully.", flush=True)
     return {"case_files": case}
 
 
@@ -235,12 +294,21 @@ def preflight_case(state: CaseGraphState) -> dict:
     result = run_preflight_with_agent(case_dir, agent)
     state["preflight"] = result
     feedback = None
+    history = list(state.get("remediation_history") or [])
     if result.verdict is PreflightVerdict.FAIL:
         feedback = "[preflight] " + result.as_evidence()
+        history.append(RemediationAttempt(
+            attempt=state.get("attempt", 1),
+            issue_class="PREFLIGHT_AUDIT",
+            action="preflight_case",
+            configuration_changes={},
+            outcome="failed",
+            evidence_reference=result.as_evidence()[:100] if result else None,
+        ))
     print(f"      -> Preflight: {result.verdict.name} "
           f"({len([f for f in result.audit if f.level == 'fail'])} FAIL, "
           f"{len([f for f in result.audit if f.level == 'warn'])} WARN)", flush=True)
-    return {"preflight": result, "error_feedback": feedback}
+    return {"preflight": result, "error_feedback": feedback, "remediation_history": history}
 
 
 def patch_files(state: CaseGraphState) -> dict:
@@ -253,7 +321,6 @@ def patch_files(state: CaseGraphState) -> dict:
     """
     patch_attempt = state.get("patch_attempt", 0) + 1
     print(f"\n[Self-Correction {patch_attempt}/3] Querying LLM for targeted dictionary patch...", flush=True)
-    val_res = state.get("validation")
     err_fb = state.get("error_feedback", "")
     file_context = _collect_file_context(state)
 
@@ -267,7 +334,21 @@ def patch_files(state: CaseGraphState) -> dict:
     print(f"      -> LLM returned patches for: {list(overrides.keys())}", flush=True)
     stats = dict(state.get("patch_stats") or {})
     stats["attempts"] = stats.get("attempts", 0) + 1
-    return {"file_overrides": overrides, "patch_attempt": patch_attempt, "patch_stats": stats}
+    history = list(state.get("remediation_history") or [])
+    history.append(RemediationAttempt(
+        attempt=patch_attempt,
+        issue_class="DICTIONARY_SYNTAX",
+        action="extract_file_patches",
+        configuration_changes={"file_overrides": list(overrides.keys())},
+        outcome="succeeded" if overrides else "failed",
+        evidence_reference=err_fb[:100] if err_fb else None,
+    ))
+    return {
+        "file_overrides": overrides,
+        "patch_attempt": patch_attempt,
+        "patch_stats": stats,
+        "remediation_history": history,
+    }
 
 
 def validate_case(state: CaseGraphState) -> dict:
@@ -279,12 +360,29 @@ def validate_case(state: CaseGraphState) -> dict:
     print(f"\n[5/5] Running Docker OpenFOAM validation ladder on {case_dir_str}...", flush=True)
     result = _make_validation_agent(state).run_ladder(Path(case_dir_str), skip_mesh_generation=bool(mesh_dir_str))
     feedback = None
+    history = list(state.get("remediation_history") or [])
     if not result.ok:
         feedback = f"[{result.stage}] " + "\n".join(e.message for e in result.errors)
         err_classes = [e.failure_class.name for e in result.errors]
         print(f"      -> Validation FAILED at stage [{result.stage}]: {err_classes}", flush=True)
+        history.append(RemediationAttempt(
+            attempt=state.get("attempt", 1),
+            issue_class=",".join(err_classes) if err_classes else "VALIDATION_FAILURE",
+            action="validate_case",
+            configuration_changes={},
+            outcome="failed",
+            evidence_reference=feedback[:100] if feedback else None,
+        ))
     else:
         print(f"      -> Validation PASSED at stage [{result.stage}]!", flush=True)
+        history.append(RemediationAttempt(
+            attempt=state.get("attempt", 1),
+            issue_class="NONE",
+            action="validate_case",
+            configuration_changes={},
+            outcome="succeeded",
+            evidence_reference=None,
+        ))
     # If a targeted patch was applied this trip and validation now passes, the
     # patch_files path did its job. Record it so patch resolution rate is measurable.
     patch_stats = state.get("patch_stats")
@@ -293,7 +391,7 @@ def validate_case(state: CaseGraphState) -> dict:
             print(f"      -> patch resolved the failure (success rate: {patch_stats['attempts']} attempts)", flush=True)
         else:
             print(f"      -> patch did NOT resolve (attempt #{patch_stats['attempts']})", flush=True)
-    return {"validation": result, "error_feedback": feedback, "done": result.ok}
+    return {"validation": result, "error_feedback": feedback, "done": result.ok, "remediation_history": history}
 
 
 
@@ -355,7 +453,7 @@ def route_after_patch(state: CaseGraphState) -> str:
 
 def build_graph():
     """Assemble the StateGraph. Call .compile() on the result to get a runnable."""
-    graph = StateGraph(CaseGraphState)
+    graph = StateGraph(cast(type, CaseGraphState))
     graph.add_node("read_mesh", read_mesh)
     graph.add_node("build_intent", build_intent)
     graph.add_node("expand_spec", expand_spec)
@@ -368,7 +466,7 @@ def build_graph():
     graph.add_edge("read_mesh", "build_intent")
     graph.add_conditional_edges(
         "build_intent",
-        lambda state: "expand_spec" if not state.get("intent_error") else END,
+        lambda state: END if (state.get("intent_error") or state.get("safe_exit")) else "expand_spec",
         {"expand_spec": "expand_spec", END: END},
     )
     graph.add_edge("expand_spec", "render_case")
@@ -405,8 +503,57 @@ def run(nl: str, case_dir: Path, mesh_dir: Path | None = None, config: LLMConfig
         "attempt": 0,
         "max_attempts": max_attempts,
         "patch_stats": {"attempts": 0},
+        "remediation_history": [],
+        "invalid_safe_exit_count": 0,
         "procs": procs,
         "timeout": timeout,
         "image": image,
     }
     return cast(CaseGraphState, app.invoke(initial))
+
+
+def run_pipeline(nl: str, case_dir: Path, mesh_dir: Path | None = None, config: LLMConfig | None = None,
+                 max_attempts: int = DEFAULT_MAX_ATTEMPTS, procs: int | None = None,
+                 timeout: int | None = None, image: str | None = None) -> PipelineResult:
+    """Execute the case generation graph and return a structured PipelineResult."""
+    final_state = run(
+        nl=nl,
+        case_dir=case_dir,
+        mesh_dir=mesh_dir,
+        config=config,
+        max_attempts=max_attempts,
+        procs=procs,
+        timeout=timeout,
+        image=image,
+    )
+    safe_exit = final_state.get("safe_exit")
+    safe_val = final_state.get("safe_exit_validation")
+    val = final_state.get("validation")
+    intent_err = final_state.get("intent_error")
+    history = final_state.get("remediation_history", [])
+    attempts = final_state.get("attempt", 0)
+
+    if safe_exit is not None:
+        return PipelineResult(
+            success=False,
+            exit_code=2,
+            safe_exit=safe_exit,
+            safe_exit_validation=safe_val,
+            remediation_history=history,
+            case_dir=str(case_dir),
+            attempts_used=attempts,
+        )
+
+    is_ok = bool(val and val.ok and not intent_err)
+    err_msg = intent_err or ("; ".join(e.message for e in val.errors) if (val and not val.ok) else None)
+    return PipelineResult(
+        success=is_ok,
+        exit_code=0 if is_ok else 1,
+        safe_exit=None,
+        safe_exit_validation=safe_val,
+        error=err_msg,
+        remediation_history=history,
+        case_dir=str(case_dir),
+        attempts_used=attempts,
+    )
+
