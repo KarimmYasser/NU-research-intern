@@ -152,6 +152,50 @@ def test_docker_run_handles_none_stdout(tmp_path):
         assert res.stdout == "output tail"
 
 
+def test_docker_run_timeout_with_zero_output(tmp_path):
+    import time
+    from unittest.mock import MagicMock, patch
+
+    mock_proc = MagicMock()
+    # A generator that hangs without yielding anything
+    def slow_readline():
+        time.sleep(1.0)
+        return ""
+    mock_proc.stdout.readline.side_effect = slow_readline
+    mock_proc.communicate.return_value = ("", "")
+    mock_proc.returncode = None
+
+    agent = ValidationAgent(timeout=0.1)
+    with patch("subprocess.Popen", return_value=mock_proc):
+        res = agent._docker_run(tmp_path, ["foamRun"])
+        assert res.returncode == 1
+        assert "timed out after 0.1s" in res.stderr
+        mock_proc.kill.assert_called()
+
+
+def test_parallel_solver_command_flags(tmp_path):
+    from unittest.mock import MagicMock, patch
+    system = tmp_path / "system"
+    system.mkdir(parents=True)
+    (system / "controlDict").write_text("FoamFile { class dictionary; object controlDict; }\nsolver fluid;\n")
+
+    agent = ValidationAgent(nprocs=4)
+    called_cmds = []
+
+    def fake_docker_run(case_dir, args, stop_on_nan=False):
+        called_cmds.append(args)
+        return MagicMock(returncode=0, stdout="success", stderr="")
+
+    with patch.object(agent, "_docker_run", side_effect=fake_docker_run):
+        res = agent.run_solver(tmp_path)
+        assert res.ok
+        # Verify decomposePar and parallel foamRun commands
+        assert called_cmds[0] == ["decomposePar", "-force"]
+        assert "--oversubscribe" in called_cmds[1]
+        assert "-np" in called_cmds[1]
+        assert "4" in called_cmds[1]
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in sorted(globals().items()):

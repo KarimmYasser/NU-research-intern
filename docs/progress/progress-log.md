@@ -4,6 +4,29 @@ Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
 `docs/architecture/phase-ii-architecture.md` for the design this validates.
 
+## 2026-08-14 — Pipeline Hardening, Preflight Box Fallback & CLI Flags
+
+**Focus:** End-to-end pipeline robustness, non-blocking timeout handling in Docker, static preflight coverage for box cases, CLI execution controls, and dictionary header deduplication.
+
+### 1. Non-Blocking Validation Timeout & MPI Flags (`validation/validation_agent.py`)
+- **Root Cause Addressed:** `_docker_run` previously read process output using blocking `proc.stdout.readline()`. If a container or solver process stalled silently without emitting output, the timeout check was never reached.
+- **Fix:** Switched to a background reader thread with a `queue.Queue`, allowing the main thread to sleep in short steps and unconditionally enforce the wall-clock timeout.
+- **Docker Process Handling:** Added `--init` to `docker run` to ensure signals (SIGTERM/SIGKILL) propagate cleanly to child solver processes inside the container.
+- **OpenMPI Oversubscribe:** Added `--oversubscribe` to `mpirun` in `_run_solver_parallel` to avoid slot allocation failures on systems where `nprocs` exceeds available Docker core assignments.
+
+### 2. Preflight Patch Coverage for Box Cases (`preflight/audit.py`)
+- **Enhancement:** Added `_blockmesh_patch_names` and fallback support to `_check_patch_coverage`. When `constant/polyMesh/boundary` is absent (standard for box cases prior to `blockMesh`), the audit parses `system/blockMeshDict` boundary patch definitions to verify field patch consistency before Docker runs.
+
+### 3. Custom Dictionary Header Sanitization (`rendering/renderer.py`)
+- **Enhancement:** Added `_sanitize_dict_body()` to strip duplicate `FoamFile` blocks, OpenFOAM banners, and separator lines from `custom_fv_schemes` and `custom_fv_solution` before wrapping them with canonical headers and footers.
+
+### 4. CLI Execution Flags (`src/__main__.py`, `orchestration/graph.py`)
+- **CLI Options:** Added `--procs`, `--timeout`, and `--image` flags to `python -m src run`, propagating them through `CaseGraphState` to configure `ValidationAgent` in both preflight and validation steps.
+
+### 5. Test Suite Status
+- Added unit tests across `tests/test_validation.py`, `tests/test_preflight.py`, and `tests/test_renderer.py`.
+- Full repository test suite passed cleanly: **170 passed in 1.07s**.
+
 ## 2026-08-13 — Pipeline Accuracy & Reliability Boosters
 
 **What changed:**

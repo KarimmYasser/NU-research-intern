@@ -67,6 +67,10 @@ class CaseGraphState(TypedDict, total=False):
     validation: ValidationResult
     preflight: PreflightResult  # Level A/B/C preflight gate result (set by preflight_case)
 
+    procs: Optional[int]
+    timeout: Optional[int]
+    image: Optional[str]
+
     attempt: int
     patch_attempt: int
     max_attempts: int
@@ -77,6 +81,17 @@ class CaseGraphState(TypedDict, total=False):
 
 
 # --- helpers ----------------------------------------------------------------
+
+def _make_validation_agent(state: CaseGraphState) -> ValidationAgent:
+    kwargs: dict = {}
+    if state.get("procs") is not None:
+        kwargs["nprocs"] = state["procs"]
+    if state.get("timeout") is not None:
+        kwargs["timeout"] = state["timeout"]
+    if state.get("image") is not None:
+        kwargs["image"] = state["image"]
+    return ValidationAgent(**kwargs)
+
 
 def _collect_file_context(state: CaseGraphState) -> str:
     """Read the actual content of all files mentioned in the last validation errors."""
@@ -216,7 +231,7 @@ def preflight_case(state: CaseGraphState) -> dict:
     """
     case_dir = Path(state.get("case_dir", ""))
     print(f"\n[4.5/5] Preflight gate on {case_dir} (audit + bounded dry run)...", flush=True)
-    agent = ValidationAgent(nprocs=DEFAULT_PROCS)
+    agent = _make_validation_agent(state)
     result = run_preflight_with_agent(case_dir, agent)
     state["preflight"] = result
     feedback = None
@@ -262,7 +277,7 @@ def validate_case(state: CaseGraphState) -> dict:
     case_dir_str = state.get("case_dir", "")
     mesh_dir_str = state.get("mesh_dir")
     print(f"\n[5/5] Running Docker OpenFOAM validation ladder on {case_dir_str}...", flush=True)
-    result = ValidationAgent().run_ladder(Path(case_dir_str), skip_mesh_generation=bool(mesh_dir_str))
+    result = _make_validation_agent(state).run_ladder(Path(case_dir_str), skip_mesh_generation=bool(mesh_dir_str))
     feedback = None
     if not result.ok:
         feedback = f"[{result.stage}] " + "\n".join(e.message for e in result.errors)
@@ -373,7 +388,8 @@ def build_graph():
 
 
 def run(nl: str, case_dir: Path, mesh_dir: Path | None = None, config: LLMConfig | None = None,
-        max_attempts: int = DEFAULT_MAX_ATTEMPTS) -> CaseGraphState:
+        max_attempts: int = DEFAULT_MAX_ATTEMPTS, procs: int | None = None,
+        timeout: int | None = None, image: str | None = None) -> CaseGraphState:
     """Convenience entry point: compile the graph and run it to completion.
 
     `mesh_dir` is optional. When given, the case is built around the provided
@@ -389,5 +405,8 @@ def run(nl: str, case_dir: Path, mesh_dir: Path | None = None, config: LLMConfig
         "attempt": 0,
         "max_attempts": max_attempts,
         "patch_stats": {"attempts": 0},
+        "procs": procs,
+        "timeout": timeout,
+        "image": image,
     }
     return cast(CaseGraphState, app.invoke(initial))

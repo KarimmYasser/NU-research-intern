@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import queue
 import re
 import subprocess
+import threading
+import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -69,10 +72,10 @@ class ValidationResult:
 class ValidationAgent:
     _CHECKED_MESHES: set[str] = set()
 
-    def __init__(self, image: str = DEFAULT_IMAGE, timeout: int = DEFAULT_TIMEOUT,
+    def __init__(self, image: str = DEFAULT_IMAGE, timeout: float | int = DEFAULT_TIMEOUT,
                  nprocs: int = DEFAULT_PROCS):
         self.image = image
-        self.timeout = timeout
+        self.timeout = float(timeout)
         self.nprocs = max(1, nprocs)
 
     @classmethod
@@ -170,7 +173,7 @@ class ValidationAgent:
             errs = self.parse_errors(dec.stdout + dec.stderr, FailureClass.SOLVER_RUNTIME)
             return ValidationResult(False, "decomposePar", errs, dec.stdout + dec.stderr)
 
-        cp = self._docker_run(case_dir, ["mpirun", "--allow-run-as-root",
+        cp = self._docker_run(case_dir, ["mpirun", "--allow-run-as-root", "--oversubscribe",
                                          "-np", str(self.nprocs), "foamRun", "-parallel"],
                               stop_on_nan=True)
         ok = cp.returncode == 0
@@ -208,39 +211,71 @@ class ValidationAgent:
     def _docker_run(self, case_dir: Path, args: list[str],
                     stop_on_nan: bool = False) -> subprocess.CompletedProcess:
         host = case_dir.resolve().as_posix()  # e.g. D:/.../case -> Docker Desktop maps it
-        cmd = ["docker", "run", "--rm", "-v", f"{host}:/case", "-w", "/case", self.image, *args]
+        cmd = ["docker", "run", "--rm", "--init", "-v", f"{host}:/case", "-w", "/case", self.image, *args]
         try:
             total_text: list[str] = []
-            import time as _time
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, bufsize=1)
             exit_code: int | None = None
             reason: str | None = None  # "timeout" | "nan" -> overrides returncode
             line_buffer: list[str] = []
-            start = _time.monotonic()
-            try:
-                if proc.stdout is not None:
-                    while True:
-                        line = proc.stdout.readline()
-                        if not line:
-                            break  # EOF only when the process exits
-                        line_buffer.append(line)
-                        if stop_on_nan and self._NAN_RE.search(line):
-                            reason = "nan"
-                            break
-                        if _time.monotonic() - start > self.timeout:
-                            reason = "timeout"
-                            break
-                if reason in ("nan", "timeout"):
+            start = time.monotonic()
+
+            if proc.stdout is not None:
+                q: queue.Queue[str | None] = queue.Queue()
+
+                def reader():
+                    try:
+                        for line in iter(proc.stdout.readline, ""):
+                            q.put(line)
+                    except Exception:
+                        pass
+                    finally:
+                        q.put(None)
+
+                reader_thread = threading.Thread(target=reader, daemon=True)
+                reader_thread.start()
+
+                while True:
+                    elapsed = time.monotonic() - start
+                    if elapsed > self.timeout:
+                        reason = "timeout"
+                        break
+                    try:
+                        timeout_step = min(0.5, max(0.05, self.timeout - elapsed))
+                        line = q.get(timeout=timeout_step)
+                    except queue.Empty:
+                        continue
+                    if line is None:
+                        break  # EOF: process finished writing
+                    line_buffer.append(line)
+                    if stop_on_nan and self._NAN_RE.search(line):
+                        reason = "nan"
+                        break
+
+            if reason in ("nan", "timeout"):
+                try:
                     proc.kill()
-                tail = proc.communicate()[0] or ""
+                except OSError:
+                    pass
+
+            tail: str = ""
+            try:
+                communicate_timeout = max(0.1, self.timeout - (time.monotonic() - start)) if reason is None else 1.0
+                tail = proc.communicate(timeout=communicate_timeout)[0] or ""
                 exit_code = proc.returncode
-            except subprocess.TimeoutExpired:
-                # communicate() raised its own wall-clock timeout first
-                proc.kill()
-                tail, _ = proc.communicate()
+            except (subprocess.TimeoutExpired, Exception):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                try:
+                    tail, _ = proc.communicate(timeout=1.0)
+                except Exception:
+                    tail = ""
                 exit_code = None
-                reason = "timeout"
+                if reason is None:
+                    reason = "timeout"
 
             total_text.extend(line_buffer)
             if tail:

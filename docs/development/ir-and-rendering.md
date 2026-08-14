@@ -185,6 +185,9 @@ Key mechanics:
   `incompressibleVoF`, `compressibleVoF`). The renderer falls back to the first
   preset if a name is unknown — **every preset key you reference must be defined
   in both dicts.**
+- **Custom Numerics Sanitization**: When `custom_fv_schemes` or `custom_fv_solution`
+  is supplied, `_sanitize_dict_body` strips any existing `FoamFile` blocks, header banners,
+  or separators before wrapping with the canonical OpenFOAM header and footer.
 - **Per-phase transport defaults** for VoF/Euler families are a small table
   (`_PHASE_NU_RHO`, `renderer.py:772`) — water/air/oil/mercury/sludge/carrier/
   cloud.

@@ -68,8 +68,10 @@ A diverged solver prints `nan` residuals forever instead of crashing, which used
 to burn the full timeout and get misclassified `ENVIRONMENT` (dead-ending the
 graph). Now:
 
-1. `_docker_run(stop_on_nan=True)` **kills the container at the first non-finite
-   residual** (`_NAN_RE` matches `residual = nan`, `sum local = nan`, ...).
+1. `_docker_run(stop_on_nan=True)` runs the container with `--init` and uses a
+   **threaded non-blocking queue reader** to enforce wall-clock timeouts even when
+   the solver hangs silently without emitting output. It **kills the container at
+   the first non-finite residual** (`_NAN_RE` matches `residual = nan`, `sum local = nan`, ...).
 2. stdout+stderr is retained even on timeout/NaN (`_fake_cp` carries the partial
    output) — evidence is never thrown away.
 3. The failure classifies `SOLVER_RUNTIME`, routing back to `build_intent`.
@@ -79,10 +81,10 @@ graph). Now:
 With `nprocs > 1`, the solver rung writes a scotch `system/decomposeParDict`
 (always — a stale dict from a previous run would decompose into the wrong number
 of subdomains), runs `decomposePar -force`, then
-`mpirun --allow-run-as-root -np N foamRun -parallel`. Decomposition goes to
+`mpirun --allow-run-as-root --oversubscribe -np N foamRun -parallel`. Decomposition goes to
 `processorN/` dirs inside the case; no reconstruction afterward (validation only
-needs proof the solver ran). This cut a 10.6M-cell RHVT run from ~20+ min to
-~1.8 min. Serial (default) is unchanged.
+needs proof the solver ran). `--oversubscribe` prevents slot allocation aborts when
+running on hosts where `nprocs` exceeds available Docker core assignments.
 
 ### checkMesh pass caching
 
@@ -120,7 +122,9 @@ config defects chosen from the concrete failure classes the pipeline has hit:
 - `endTime ≤ startTime`, non-positive `deltaT`;
 - `ddtSchemes.default = none` (no time-marching term);
 - 0/ field files missing patches that exist in the mesh boundary
-  (`patch_not_in_field`) + cross-field patch-set consistency (`patch_set_mismatch`);
+  (`patch_not_in_field`) — inspects `constant/polyMesh/boundary` when available,
+  falling back to parsing `system/blockMeshDict` for box geometry cases prior to meshing;
+- cross-field patch-set consistency (`patch_set_mismatch`);
 - compressible `thermophysicalProperties` present and sane (positive molWeight/Cp).
 
 Each finding is `AuditFinding(code, level, message)` with a `code` that maps to a

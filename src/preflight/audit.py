@@ -103,7 +103,8 @@ def audit_case(case_dir: Path) -> list[AuditFinding]:
     _check_internal_fields(zero, compressible, findings)
 
     # 5. Patch coverage: every 0/ field's boundaryField must list every mesh patch.
-    _check_patch_coverage(zero, constant / "polyMesh" / "boundary", findings)
+    _check_patch_coverage(zero, constant / "polyMesh" / "boundary", findings,
+                          blockmesh_dict=system / "blockMeshDict")
 
     # 6. Compressible sanity: thermophysicalProperties present with positive rho.
     if compressible:
@@ -333,7 +334,7 @@ def _top_level_internal_field(body: str) -> str | None:
 
 
 def _check_patch_coverage(zero: Path, boundary: Path,
-                          findings: list[AuditFinding]) -> None:
+                          findings: list[AuditFinding], blockmesh_dict: Path | None = None) -> None:
     """Every patch in the mesh boundary file must appear in every 0/ field.
 
     The renderer builds each field's boundaryField from the *intent's* patch
@@ -343,6 +344,8 @@ def _check_patch_coverage(zero: Path, boundary: Path,
     mesh_patches: set[str] = set()
     if boundary.is_file():
         mesh_patches = set(_mesh_patch_names(boundary))
+    elif blockmesh_dict is not None and blockmesh_dict.is_file():
+        mesh_patches = set(_blockmesh_patch_names(blockmesh_dict))
     if not mesh_patches and not zero.is_dir():
         return
     field_patch_sets: dict[str, set[str]] = {}
@@ -399,6 +402,20 @@ def _mesh_patch_names(boundary_path: Path) -> list[str]:
             seen.add(n)
             out.append(n)
     return out
+
+
+def _blockmesh_patch_names(blockmesh_path: Path) -> list[str]:
+    text = blockmesh_path.read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"boundary\s*\(\s*(.*?)\s*\)\s*;", text, re.S)
+    if not m:
+        return []
+    bnd = m.group(1)
+    names: list[str] = []
+    for pm in re.finditer(r'^\s*([A-Za-z][A-Za-z0-9_]*)\s*\{', bnd, re.M):
+        n = pm.group(1)
+        if n != "FoamFile":
+            names.append(n)
+    return list(dict.fromkeys(names))
 
 
 def _check_thermo_properties(constant: Path, findings: list[AuditFinding]) -> None:

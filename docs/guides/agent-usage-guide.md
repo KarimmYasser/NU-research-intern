@@ -87,12 +87,15 @@ python -m src run --mesh "temp/case-files" --case-dir "temp/out/my_case"
 
 | Argument | Required | Description |
 |---|---|---|
-| `--mesh <path>` | **Yes** | Path to the provided mesh folder (containing `polyMesh/` or `boundary`). |
+| `--mesh <path>` | No | Path to the provided mesh folder (containing `polyMesh/` or `boundary`). Omit for box geometry. |
 | `--case-dir <path>` | **Yes** | Directory where rendered OpenFOAM case files will be written. |
 | `--prompt "<text>"` | No | Natural-language fluid simulation description. |
 | `--prompt-file <path>` | No | File path containing the prompt text. |
 | `--max-attempts <int>` | No | Maximum validation-and-retry attempts (default: `3`). |
 | `--model <model_name>` | No | LLM model override (e.g., `gpt-4o`, `qwen2.5:7b`). |
+| `--procs <int>` | No | MPI ranks for parallel solver execution (overrides `FOAM_VALIDATION_PROCS`, default: `1`). |
+| `--timeout <int>` | No | Solver validation timeout in seconds (overrides `FOAM_VALIDATION_TIMEOUT`, default: `600`). |
+| `--image <image>` | No | Docker image to run OpenFOAM (overrides `FOAM_DOCKER_IMAGE`, default: `microfluidica/openfoam:13`). |
 
 ---
 
@@ -117,7 +120,9 @@ final_state = graph.run(
     mesh_dir=Path("temp/case-files"),
     case_dir=Path("temp/out/my_case"),
     config=LLMConfig(),
-    max_attempts=3
+    max_attempts=3,
+    procs=4,       # optional: parallel MPI ranks
+    timeout=600,   # optional: validation timeout seconds
 )
 
 if final_state.get("intent_error"):

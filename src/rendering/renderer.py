@@ -773,9 +773,21 @@ _FVSOLUTION = {
 }
 
 
+def _sanitize_dict_body(body: str) -> str:
+    """Strip existing FoamFile headers, banners, and footers if present in custom dict bodies."""
+    import re as _re
+    # Strip leading banner comments
+    cleaned = _re.sub(r"/\*.*?\*/", "", body, flags=_re.S)
+    # Strip FoamFile block
+    cleaned = _re.sub(r"FoamFile\s*\{[^}]*\}", "", cleaned, flags=_re.S)
+    # Strip header/footer separator lines
+    cleaned = _re.sub(r"//\s*\*[\s\*]+//", "", cleaned)
+    return cleaned.strip()
+
+
 def render_fvschemes(spec: CaseSpec) -> str:
     if spec.custom_fv_schemes:
-        body = spec.custom_fv_schemes
+        body = _sanitize_dict_body(spec.custom_fv_schemes)
     else:
         body = _FVSCHEMES.get(spec.numerics, _FVSCHEMES["incompressibleFluid_limitedLinear"])
     return f"{_header('dictionary', 'fvSchemes', 'system')}\n{body}\n{FOOTER}\n"
@@ -783,7 +795,7 @@ def render_fvschemes(spec: CaseSpec) -> str:
 
 def render_fvsolution(spec: CaseSpec) -> str:
     if spec.custom_fv_solution:
-        body = spec.custom_fv_solution
+        body = _sanitize_dict_body(spec.custom_fv_solution)
     else:
         body = _FVSOLUTION.get(spec.numerics, _FVSOLUTION["incompressibleFluid_limitedLinear"])
     return f"{_header('dictionary', 'fvSolution', 'system')}\n{body}\n{FOOTER}\n"

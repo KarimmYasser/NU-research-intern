@@ -319,6 +319,35 @@ def test_all_case_types_render():
             assert content.rstrip().endswith(FOOTER), ct
 
 
+def test_custom_schemes_and_solution_sanitizes_headers():
+    spec = cavity_spec()
+    # Provide custom_fv_schemes and custom_fv_solution with duplicate FoamFile and banner blocks
+    custom_schemes = (
+        BANNER + "\nFoamFile\n{\n    version 2.0;\n    class dictionary;\n}\n"
+        "// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //\n"
+        "ddtSchemes { default Euler; }\ngradSchemes { default Gauss linear; }\n"
+    )
+    custom_sol = (
+        BANNER + "\nFoamFile\n{\n    version 2.0;\n    class dictionary;\n}\n"
+        "solvers { p { solver GAMG; tolerance 1e-6; relTol 0.1; smoother GaussSeidel; } }\n"
+    )
+    spec.custom_fv_schemes = custom_schemes
+    spec.custom_fv_solution = custom_sol
+
+    c = render(spec)
+    schemes = c.system["fvSchemes"]
+    sol = c.system["fvSolution"]
+
+    # Header must appear exactly once
+    assert schemes.count("FoamFile") == 1
+    assert schemes.count("Version:  13") == 1
+    assert "ddtSchemes" in schemes
+
+    assert sol.count("FoamFile") == 1
+    assert sol.count("Version:  13") == 1
+    assert "solvers" in sol
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in sorted(globals().items()):

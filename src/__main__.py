@@ -64,6 +64,12 @@ def main(argv: list[str] | None = None) -> int:
     run_p.add_argument("--prompt-file", help="Read the prompt from this file instead.")
     run_p.add_argument("--max-attempts", type=int, default=graph.DEFAULT_MAX_ATTEMPTS)
     run_p.add_argument("--model", help="Override LOCAL_LLM_MODEL for this run.")
+    run_p.add_argument("--procs", type=int, default=None,
+                       help="Override number of MPI ranks for parallel solver execution (defaults to FOAM_VALIDATION_PROCS or 1).")
+    run_p.add_argument("--timeout", type=int, default=None,
+                       help="Override solver validation timeout in seconds (defaults to FOAM_VALIDATION_TIMEOUT or 600).")
+    run_p.add_argument("--image", default=None,
+                       help="Override Docker image (defaults to FOAM_DOCKER_IMAGE or microfluidica/openfoam:13).")
 
     args = parser.parse_args(argv)
 
@@ -78,6 +84,9 @@ def main(argv: list[str] | None = None) -> int:
             mesh_dir=Path(args.mesh) if args.mesh else None,
             config=config,
             max_attempts=args.max_attempts,
+            procs=args.procs,
+            timeout=args.timeout,
+            image=args.image,
         )
         result = final_state.get("validation")
         intent_error = final_state.get("intent_error")

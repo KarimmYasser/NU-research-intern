@@ -431,6 +431,34 @@ GAMG:  Solving for p, Initial residual = 0.99, Final residual = 0.5, No Iteratio
     assert any("RISING" in t for t in pred.trend_line)
 
 
+def test_audit_box_case_without_polymesh_uses_blockmeshdict(tmp_path):
+    """When a box case is freshly rendered, constant/polyMesh/boundary does not
+    exist yet. The audit must fall back to parsing system/blockMeshDict boundary."""
+    intent = CaseIntent(
+        regime="laminar", nu=1e-5, geometry="box",
+        box_size=(0.1, 0.1, 0.1), cells=(20, 20, 1),
+        patches=[
+            PatchIntent(name="in", role="inlet", velocity=(1, 0, 0)),
+            PatchIntent(name="out", role="outlet", pressure=0.0),
+            PatchIntent(name="walls", role="wall"),
+        ],
+    )
+    from rendering.renderer import render
+    case = render(intent_to_spec(intent))
+    d = tmp_path / "case"
+    case.write(d)
+    # Notice: no constant/polyMesh/boundary created here.
+    assert not (d / "constant" / "polyMesh" / "boundary").exists()
+    assert (d / "system" / "blockMeshDict").exists()
+
+    findings = audit_case(d)
+    fails = [f for f in findings if f.level == "fail"]
+    assert not fails, "\n".join(f.message for f in fails)
+    # Ensure patch coverage passed for all fields using blockMeshDict
+    patch_passes = [f for f in findings if f.code.startswith("patch_cover_")]
+    assert len(patch_passes) > 0
+
+
 if __name__ == "__main__":
     import inspect
     import tempfile

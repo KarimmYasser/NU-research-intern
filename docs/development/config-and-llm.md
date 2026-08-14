@@ -68,6 +68,10 @@ python -m src run \
 - `--prompt` / `--prompt-file` / stdin (Ctrl-Z/D + Enter).
 - `--max-attempts N` (default 3) and `--model NAME` (overrides
   `LOCAL_LLM_MODEL`).
+- `--procs N` (overrides `FOAM_VALIDATION_PROCS`, default 1) for parallel
+  `mpirun` solver execution.
+- `--timeout SECONDS` (overrides `FOAM_VALIDATION_TIMEOUT`, default 600).
+- `--image DOCKER_IMAGE` (overrides `FOAM_DOCKER_IMAGE`, default `microfluidica/openfoam:13`).
 - Exit code 0 iff validation passed. Prints stage banners, validation
   stage/errors, attempts used, and the case path.
 
