@@ -794,9 +794,27 @@ def render_fvschemes(spec: CaseSpec) -> str:
     return f"{_header('dictionary', 'fvSchemes', 'system')}\n{body}\n{FOOTER}\n"
 
 
+def _cap_solver_maxiter(body: str) -> str:
+    """Ensure GAMG and smoothSolver subdictionaries in custom fvSolution have a maxIter cap."""
+    import re
+
+    def _add_cap(match: re.Match) -> str:
+        block = match.group(0)
+        if "maxIter" not in block:
+            cap = "30" if "GAMG" in block else "50"
+            return block[:-1].rstrip() + f"\n        maxIter         {cap};\n    }}"
+        return block
+
+    return re.sub(
+        r'(\"?[\w\.\*\(\)\|]+\"?\s*\{[^{}]*solver\s+(?:GAMG|smoothSolver)[^{}]*\})',
+        _add_cap,
+        body,
+    )
+
+
 def render_fvsolution(spec: CaseSpec) -> str:
     if spec.custom_fv_solution:
-        body = _sanitize_dict_body(spec.custom_fv_solution)
+        body = _cap_solver_maxiter(_sanitize_dict_body(spec.custom_fv_solution))
     else:
         body = _FVSOLUTION.get(spec.numerics, _FVSOLUTION["incompressibleFluid_limitedLinear"])
     return f"{_header('dictionary', 'fvSolution', 'system')}\n{body}\n{FOOTER}\n"

@@ -13,6 +13,15 @@ from pathlib import Path
 from typing import Any
 
 KNOWLEDGE_DIR = Path(__file__).resolve().parent
+_PRIMARY_TEMPLATE_SNIPPET_CHARS = 1_200
+_PRIMARY_TEMPLATE_SNIPPETS = (
+    "physicalProperties",
+    "momentumTransport",
+    "fvSchemes",
+    "fvSolution",
+)
+_FAMILY_SNIPPET_CHARS = 800
+_PROMPT_CONTEXT_MAX_CHARS = 12_000
 
 
 _STOP_WORDS = {
@@ -32,6 +41,7 @@ class KnowledgeRetriever:
         self.boundary_conditions = self._load_json("boundary_conditions.json").get("boundary_conditions", [])
         self.thermophysics = self._load_json("thermophysics.json").get("thermophysics", [])
         self.families = self._load_json("case_families.json").get("families", [])
+        self.tutorials = self._load_tutorials()
 
     def _load_json(self, filename: str) -> dict[str, Any]:
         path = self.knowledge_dir / filename
@@ -90,8 +100,44 @@ class KnowledgeRetriever:
         except Exception:
             return []
 
+    def tutorial_provenance(self) -> dict[str, Any]:
+        """Return index provenance without exposing mutable tutorial records."""
+        data = self._load_json("v13_tutorials.json")
+        provenance = data.get("provenance", {}) if isinstance(data, dict) else {}
+        return dict(provenance) if isinstance(provenance, dict) else {}
+
+    @staticmethod
+    def _tutorial_identifier(tutorial: dict[str, Any]) -> str:
+        """Use the source-relative path because tutorial names are not unique."""
+        return str(tutorial.get("relative_path") or tutorial.get("case_name") or "unknown")
+
     def _query_words(self, query: str) -> set[str]:
         return {w for w in set(re.findall(r"\w+", query.lower())) if w not in _STOP_WORDS}
+
+    @staticmethod
+    def _case_name_tokens(case_name: str) -> list[str]:
+        """Split OpenFOAM camel-case tutorial names into normalized words."""
+        return [token.lower() for token in re.findall(r"[A-Z]?[a-z]+|\d+", case_name)]
+
+    @staticmethod
+    def _phrase_match_score(query: str, case_tokens: list[str]) -> float:
+        """Reward ordered multi-word requests matching a tutorial case name.
+
+        Word overlap alone cannot distinguish ``dam break`` from a prompt whose
+        words happen to include ``dam`` and ``break`` in unrelated contexts.
+        Case names are tokenized from their camel-case spelling (``damBreak``),
+        then compared with contiguous normalized query phrases.
+        """
+        query_tokens = re.findall(r"[a-z]+|\d+", query.lower())
+        longest = 0
+        for size in range(2, min(len(case_tokens), len(query_tokens)) + 1):
+            phrases = {tuple(query_tokens[i:i + size]) for i in range(len(query_tokens) - size + 1)}
+            case_phrases = {
+                tuple(case_tokens[i:i + size]) for i in range(len(case_tokens) - size + 1)
+            }
+            if phrases & case_phrases:
+                longest = size
+        return 12.0 * longest
 
     def _record_score(self, item: dict[str, Any], words: set[str]) -> float:
         # Underscores/hyphens are part of ids ("thermal_buoyant"); normalise
@@ -103,16 +149,69 @@ class KnowledgeRetriever:
         return sum(2.0 for w in words
                    if any(t == w or (len(w) > 4 and t.startswith(w)) for t in tokens))
 
-    def _match_tutorials(self, solver: str, flow_type: str | None, words: set[str],
+    @staticmethod
+    def _requested_physics(query: str) -> set[str]:
+        """Infer coarse retrieval constraints from user wording, not case state.
+
+        These are ranking signals only.  They never select a renderer case type
+        and therefore cannot bypass CaseIntent validation or deterministic spec
+        expansion.
+        """
+        text = query.lower()
+        requested: set[str] = set()
+        cues = {
+            "steady": ("steady", "stationary"),
+            "transient": ("transient", "unsteady", "time dependent", "time-dependent"),
+            "turbulent": ("turbulent", "rans", "les", "turbulence"),
+            "thermal": ("thermal", "temperature", "heat", "buoyant", "convection", "radiation"),
+            "species": ("species", "combustion", "reacting", "flame", "mixture"),
+            "dynamic_mesh": ("dynamic mesh", "moving mesh", "6dof", "six dof", "overset", "morphing"),
+            "multi_region": ("multi-region", "multiregion", "conjugate heat", "cht", "solid region"),
+            "multiphase": ("multiphase", "two phase", "two-phase", "vof", "free surface", "dam break", "bubble"),
+        }
+        for feature, terms in cues.items():
+            if any(term in text for term in terms):
+                requested.add(feature)
+        if "laminar" in text:
+            requested.add("laminar")
+        return requested
+
+    @staticmethod
+    def _physics_compatibility(tutorial: dict[str, Any], requested: set[str]) -> float:
+        """Score structural compatibility; absent user constraints remain neutral."""
+        features = set(tutorial.get("physics_features") or [])
+        fields = tutorial.get("fields") or []
+        constants = (tutorial.get("file_tree") or {}).get("constant", [])
+        if not features:  # Backward-compatible for an index not yet rebuilt.
+            if "dynamicMeshDict" in constants:
+                features.add("dynamic_mesh")
+            if "phaseProperties" in constants or any(str(f).startswith("alpha.") for f in fields):
+                features.add("multiphase")
+            if "T" in fields or any(str(f).startswith("T.") for f in fields):
+                features.add("thermal")
+            if any(str(f).startswith(("Y", "Xi", "Tu")) for f in fields):
+                features.add("species")
+        score = 0.0
+        for feature in requested:
+            if feature == "laminar":
+                score += 3.0 if "turbulent" not in features else -2.0
+            elif feature in {"steady", "transient"}:
+                score += 4.0 if feature in features else -1.0
+            else:
+                score += 8.0 if feature in features else -3.0
+        return score
+
+    def _match_tutorials(self, solver: str, flow_type: str | None, words: set[str], query: str,
                          top_k: int = 3, family_ids: set[str] | None = None,
                          primary_family: str | None = None) -> list[dict[str, Any]]:
         """Rank tutorial cases: family membership first (the semantic layer),
         with the *primary* matched family ranked above secondary ones, then
         (solver, flow) exactness, then keyword overlap.
         """
-        tutorials = self._load_tutorials()
+        tutorials = self.tutorials
         target_solver = (solver or "").lower()
         target_flow = (flow_type or "").lower()
+        requested_physics = self._requested_physics(query)
 
         def rank(t: dict[str, Any]) -> tuple:
             t_solver = (t.get("solver") or "").lower()
@@ -125,13 +224,22 @@ class KnowledgeRetriever:
                             else 6.0 if family_ids and fid in family_ids else 0.0)
             solver_bonus = 3.0 if target_solver and t_solver == target_solver else 0.0
             flow_bonus = 1.0 if target_flow and t_flow == target_flow else 0.0
-            exact = 10.0 if t.get("case_name") and t["case_name"].lower() in {
-                w for w in words if len(w) > 3} else 0.0
+            # Case names are often camel-cased (damBreak, obliqueShock). Split
+            # them so a user asking for the same named phenomenon gets that
+            # concrete tutorial ahead of a generic same-family reference.
+            case_token_list = self._case_name_tokens(t.get("case_name") or "")
+            case_tokens = set(case_token_list)
+            exact = 10.0 * len(case_tokens & {w for w in words if len(w) > 3})
+            phrase = self._phrase_match_score(query, case_token_list)
             kw = self._record_score(t, words)
-            return (family_bonus + exact + solver_bonus + flow_bonus + kw,
+            compatibility = self._physics_compatibility(t, requested_physics)
+            return (family_bonus + exact + phrase + solver_bonus + flow_bonus + compatibility + kw,
                     t_solver == target_solver)
 
-        ranked = sorted(tutorials, key=rank, reverse=True)
+        # Sort the stable source identifier first, then score descending. This
+        # keeps ties reproducible without reversing the lexical path order.
+        ranked = sorted(tutorials, key=self._tutorial_identifier)
+        ranked.sort(key=rank, reverse=True)
         return [t for t in ranked if rank(t)[0] > 0][:top_k] or ranked[:top_k]
 
     def _match_families(self, words: set[str], top_k: int = 2) -> list[dict[str, Any]]:
@@ -196,13 +304,23 @@ class KnowledgeRetriever:
         elif primary_family:
             fam_solvers: Counter[str] = Counter()
             fam_flows: Counter[str] = Counter()
-            for t in self._load_tutorials():
+            for t in self.tutorials:
                 if t.get("family_id") == primary_family:
                     if t.get("solver"):
                         fam_solvers[t["solver"]] += 1
                     if t.get("flow_type"):
                         fam_flows[t["flow_type"]] += 1
             fam_solver = fam_solvers.most_common(1)[0][0] if fam_solvers else None
+            # `fluid` is the broad, renderer-supported representative for the
+            # generic compressible families.  Their tutorial membership also
+            # contains specialised shockFluid cases; selecting the most common
+            # module would make a generic external-aerodynamics prompt retrieve
+            # shock-tube references instead of the matching fluid aerofoil/wedge
+            # cases. Promote shockFluid only when the user names shock physics.
+            if (primary_family in {"flow_compressible_internal", "flow_compressible_external"}
+                    and "shock" not in words and "supersonic" not in words
+                    and "hypersonic" not in words):
+                fam_solver = "fluid"
             hit = [s for s in self.solvers if s.get("name", "") == fam_solver]
             if hit:
                 top_solver = hit[0]
@@ -220,11 +338,13 @@ class KnowledgeRetriever:
         family_str = family_ids or {None}
 
         cases = self._match_tutorials(top_solver.get("name", ""), flow_type or top_solver.get("flow_type"),
-                                      words, top_k=top_cases, family_ids=family_str,
+                                      words, query, top_k=top_cases, family_ids=family_str,
                                       primary_family=primary_family)
+        primary_template = cases[0] if cases else None
+        template_contract = self._template_contract(primary_template)
 
-        # Whole BC records as grounding (the patch_boundary_types field in the
-        # tutorial index is unpopulated, so fall back to role-level guidance).
+        # Whole role-level BC records complement the primary tutorial's populated
+        # patch_boundary_types reference metadata.
         bc_rows = self.boundary_conditions[:4]
 
         lines = ["\n--- OpenFOAM Reference Case (chunkless graph retrieval) ---"]
@@ -272,8 +392,24 @@ class KnowledgeRetriever:
             "solver": top_solver,
             "families": families,
             "cases": cases,
+            "primary_template": primary_template,
+            "template_contract": template_contract,
             "boundary_conditions": bc_rows,
             "ground": ground,
+        }
+
+    def _template_contract(self, template: dict[str, Any] | None) -> dict[str, Any]:
+        """Return structural evidence that may inform, but never drive, rendering."""
+        if not template:
+            return {}
+        return {
+            "source": f"tutorials/{self._tutorial_identifier(template)}",
+            "solver": template.get("solver"),
+            "fields": list(template.get("fields") or []),
+            "file_tree": dict(template.get("file_tree") or {}),
+            "physics_features": list(template.get("physics_features") or []),
+            "patch_boundary_types": dict(template.get("patch_boundary_types") or {}),
+            "provenance": self.tutorial_provenance(),
         }
 
     def needs_deep_path(self, query: str) -> bool:
@@ -300,14 +436,7 @@ class KnowledgeRetriever:
 
     def get_tutorial_numerics(self, solver_name: str | None = None, flow_type: str | None = None) -> dict[str, str]:
         """Fetch fvSchemes and fvSolution snippets from matching v13 tutorial cases."""
-        tutorials_file = self.knowledge_dir / "v13_tutorials.json"
-        if not tutorials_file.is_file():
-            return {}
-        try:
-            tut_data = json.loads(tutorials_file.read_text(encoding="utf-8"))
-            tutorials = tut_data.get("tutorials", []) if isinstance(tut_data, dict) else tut_data
-        except Exception:
-            return {}
+        tutorials = self.tutorials
 
         target_solver = (solver_name or "").lower()
         target_flow = (flow_type or "").lower()
@@ -332,16 +461,84 @@ class KnowledgeRetriever:
             }
         return {}
 
+    def _format_primary_template(self, template: dict[str, Any] | None) -> str:
+        """Render one bounded, source-addressable tutorial as the case blueprint."""
+        if not template:
+            return (
+                "\n### Primary OpenFOAM v13 Tutorial Template\n"
+                "No local tutorial template is available. Use only the validated "
+                "solver and boundary-condition registries."
+            )
+
+        lines = [
+            "\n### Primary OpenFOAM v13 Tutorial Template",
+            f"Source: tutorials/{self._tutorial_identifier(template)}",
+            f"Case: {template.get('case_name', 'unknown')} "
+            f"(solver={template.get('solver')}, flow={template.get('flow_type')})",
+        ]
+        if template.get("family_name"):
+            lines.append(f"Family: {template['family_name']}")
+        for zone, files in (template.get("file_tree") or {}).items():
+            lines.append(f"Structural files {zone}/: {', '.join(files)}")
+        fields = template.get("fields") or []
+        if fields:
+            lines.append(f"Reference fields: {', '.join(fields)}")
+        patch_types = template.get("patch_boundary_types") or {}
+        if patch_types:
+            patch_summary = []
+            for patch_name in sorted(patch_types):
+                field_types = patch_types[patch_name]
+                if isinstance(field_types, dict):
+                    details = ", ".join(
+                        f"{field}={bc_type}" for field, bc_type in sorted(field_types.items())
+                    )
+                    patch_summary.append(f"{patch_name} ({details})")
+            if patch_summary:
+                lines.append("Reference boundary-patch structure: " + "; ".join(patch_summary))
+        lines.append(
+            "Use this tutorial as the structural starting point: preserve only its "
+            "applicable dictionary/field structure, then adapt geometry, actual mesh "
+            "patch names, boundary-condition values, and physical settings to the request. "
+            "The reference patch names above are examples only: user-requested names and "
+            "provided-mesh names are authoritative. "
+            "Do not blindly copy its geometry, patch names, numerical values, optional "
+            "files, or unsupported solver features; registry validation remains authoritative."
+        )
+        snippets = template.get("snippets") or {}
+        for name in _PRIMARY_TEMPLATE_SNIPPETS:
+            content = snippets.get(name)
+            if isinstance(content, str) and content.strip():
+                lines.append(f"Reference {name} excerpt:\n{content[:_PRIMARY_TEMPLATE_SNIPPET_CHARS]}")
+        family_snippets = template.get("family_snippets") or {}
+        for name, content in family_snippets.items():
+            if isinstance(content, str) and content.strip():
+                lines.append(
+                    f"Reference specialised dictionary excerpt ({name}; evidence only, do not copy wholesale):\n"
+                    f"{content[:_FAMILY_SNIPPET_CHARS]}"
+                )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _apply_prompt_budget(context: str) -> str:
+        """Keep all prompt grounding bounded deterministically at a safe boundary."""
+        if len(context) <= _PROMPT_CONTEXT_MAX_CHARS:
+            return context
+        marker = "\n[Prompt grounding truncated deterministically; primary template retained above.]"
+        budget = _PROMPT_CONTEXT_MAX_CHARS - len(marker)
+        cut = context.rfind("\n", 0, budget)
+        return context[:cut if cut > 0 else budget] + marker
+
     def format_prompt_context(self, query: str) -> str:
         """Format retrieved RAG knowledge into a markdown prompt grounding snippet.
 
-        Hybrid: the cheap keyword path always runs; when the complexity heuristic
-        fires, the chunkless case-graph retrieval (whole reference cases + their
-        file trees) is appended so the LLM sees the structure of a matching v13
-        tutorial case instead of flat snippets.
+        Every request receives one primary official v13 tutorial template. When
+        the complexity heuristic fires, extra case-graph references are appended
+        for comparison without replacing that primary template.
         """
         lines = ["\n--- OpenFOAM v13 Domain Knowledge & Guidelines ---"]
         retrieved = self.search(query)
+        graph = self.retrieve_case_graph(query, top_cases=2)
+        lines.append(self._format_primary_template(graph["primary_template"]))
 
         if retrieved["solvers"]:
             lines.append("Recommended Solvers:")
@@ -359,6 +556,6 @@ class KnowledgeRetriever:
             lines.append(f"- {', '.join(species_list)}")
 
         if self.needs_deep_path(query):
-            lines.append(self.retrieve_case_graph(query)["ground"].strip())
+            lines.append(graph["ground"].strip())
 
-        return "\n".join(lines)
+        return self._apply_prompt_budget("\n".join(lines))

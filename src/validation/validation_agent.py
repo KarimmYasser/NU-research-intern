@@ -23,6 +23,7 @@ import re
 import subprocess
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -244,13 +245,28 @@ class ValidationAgent:
     def _docker_run(self, case_dir: Path, args: list[str],
                     stop_on_nan: bool = False) -> subprocess.CompletedProcess:
         host = case_dir.resolve().as_posix()  # e.g. D:/.../case -> Docker Desktop maps it
-        cmd = ["docker", "run", "--rm", "--init", "-v", f"{host}:/case", "-w", "/case", self.image, *args]
+        cname = f"foam_run_{uuid.uuid4().hex[:8]}"
+        cmd = ["docker", "run", "--name", cname, "--rm", "--init", "-v", f"{host}:/case", "-w", "/case", self.image, *args]
+
+        def _cleanup_container(p: subprocess.Popen | None) -> None:
+            if p is not None:
+                try:
+                    p.kill()
+                except OSError:
+                    pass
+            try:
+                subprocess.run(["docker", "rm", "-f", cname],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+            except Exception:
+                pass
+
+        proc = None
+        reason: str | None = None  # "timeout" | "nan" -> overrides returncode
         try:
             total_text: list[str] = []
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, bufsize=1)
             exit_code: int | None = None
-            reason: str | None = None  # "timeout" | "nan" -> overrides returncode
             line_buffer: list[str] = []
             start = time.monotonic()
 
@@ -287,10 +303,7 @@ class ValidationAgent:
                         break
 
             if reason in ("nan", "timeout"):
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+                _cleanup_container(proc)
 
             tail: str = ""
             try:
@@ -298,10 +311,7 @@ class ValidationAgent:
                 tail = proc.communicate(timeout=communicate_timeout)[0] or ""
                 exit_code = proc.returncode
             except (subprocess.TimeoutExpired, Exception):
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
+                _cleanup_container(proc)
                 try:
                     tail, _ = proc.communicate(timeout=1.0)
                 except Exception:

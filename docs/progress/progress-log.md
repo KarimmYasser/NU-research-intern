@@ -4,6 +4,26 @@ Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
 `docs/architecture/phase-ii-architecture.md` for the design this validates.
 
+## 2026-08-14 — Solver Performance Bounds, Docker Daemon Cleanup & BC Registry Expansion
+
+**Focus:** Large-mesh linear solver iteration bounding (`maxIter`), explicit Docker container lifetime cleanup, `totalTemperature` support, and `system/fvConstraints` validation.
+
+### 1. Linear Solver `maxIter` Capping (`src/rendering/renderer.py`)
+- **Root Cause Addressed:** Custom `fvSolution` emitted by the LLM frequently omitted `maxIter`, causing `GAMG` and `smoothSolver` on $p$ and $h$ to iterate up to the default 1,000 iterations per step on massive 5M-cell meshes (~190s per time step, hitting timeouts).
+- **Fix:** Implemented `_cap_solver_maxiter()` in `render_fvsolution()` to automatically inject bounded iterations (`maxIter 30` for `GAMG`, `maxIter 50` for `smoothSolver`) when omitted, achieving a **$15\times$ speedup** (~10–13s per time step on 8 cores).
+
+### 2. Docker Daemon Container Cleanup (`src/validation/validation_agent.py`)
+- **Root Cause Addressed:** On timeout or NaN abort, `proc.kill()` only terminated the host `docker` CLI process, leaving the container running inside the Docker daemon in the background and burning CPU.
+- **Fix:** Assigned unique container names (`--name foam_run_<id>`) and implemented explicit daemon-level cleanup via `_cleanup_container()` (`docker rm -f <id>`) on all timeout and abort paths.
+
+### 3. Knowledge Registry & BC Validation (`src/knowledge/bc_types.json`, `src/knowledge/intent_validator.py`)
+- **`totalTemperature` Support:** Added complete `totalTemperature` boundary condition specification (`T0`, `gamma`, `psi`, `phi`, `U`) to `bc_types.json` for compressible gas inlets.
+- **`fvConstraints` Syntax Guardrail:** Added validation in `IntentValidator._check_extra_files()` to reject empty `constraints { }` blocks that lack a `type` declaration, preventing fatal OpenFOAM v13 startup crashes.
+
+### 4. Test Suite Status
+- Added registry and configuration unit tests across `tests/test_knowledge_registries.py` and `tests/test_llm_config.py`.
+- Full repository test suite passed cleanly: **202 passed in 2.71s**.
+
 ## 2026-08-14 — Evidence-Backed Safe Exit, OpenFOAM Foundation v13 Capability Alignment & Code Quality
 
 **Focus:** Safe exit anti-laziness guardrails, OpenFOAM Foundation v13 diagnostic tool integration, graph ledger tracking, CLI exit-code contract, and full codebase dead-code and quality audit.

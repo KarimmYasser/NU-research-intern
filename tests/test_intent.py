@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ir import CaseIntent, PatchIntent, Regime, intent_to_spec
+from rendering import render
 
 
 def cavity_intent(regime: Regime = "turbulent") -> CaseIntent:
@@ -102,6 +103,28 @@ def test_bc_overrides_applied_to_spec():
     inlet_patch = next(p for p in spec.patches if p.name == "inlet")
     assert inlet_patch.bc["p"].type == "totalPressure"
     assert inlet_patch.bc["p"].value == "uniform 400000"
+
+
+def test_requested_patch_names_and_only_requested_structure_reach_rendering():
+    """Tutorial grounding must not copy reference patch names or optional files."""
+    intent = CaseIntent(
+        regime="laminar",
+        geometry="box",
+        box_size=(1, 1, 0.1),
+        patches=[
+            PatchIntent(name="custom_lid", role="movingWall", velocity=(2, 0, 0)),
+            PatchIntent(name="custom_walls", role="wall"),
+            PatchIntent(name="thin_direction", role="empty"),
+        ],
+    )
+    spec = intent_to_spec(intent)
+    case = render(spec)
+    assert {patch.name for patch in spec.patches} == {"custom_lid", "custom_walls", "thin_direction"}
+    assert "movingWall" not in case.zero["U"]
+    assert "fixedWalls" not in case.zero["U"]
+    assert "frontAndBack" not in case.zero["U"]
+    assert "fvConstraints" not in case.system
+    assert "functions" not in case.system
 
 
 def test_turbulence_model_override_propagates():

@@ -68,13 +68,13 @@ A diverged solver prints `nan` residuals forever instead of crashing, which used
 to burn the full timeout and get misclassified `ENVIRONMENT` (dead-ending the
 graph). Now:
 
-1. `_docker_run(stop_on_nan=True)` runs the container with `--init` and uses a
+1. `_docker_run(stop_on_nan=True)` assigns a unique name (`--name foam_run_<id>`), runs with `--init`, and uses a
    **threaded non-blocking queue reader** to enforce wall-clock timeouts even when
-   the solver hangs silently without emitting output. It **kills the container at
-   the first non-finite residual** (`_NAN_RE` matches `residual = nan`, `sum local = nan`, ...).
+   the solver hangs silently without emitting output. On timeout or the first non-finite residual (`_NAN_RE`), it
+   **explicitly removes the container from the Docker daemon** (`docker rm -f <id>`), preventing orphaned background processes.
 2. stdout+stderr is retained even on timeout/NaN (`_fake_cp` carries the partial
    output) — evidence is never thrown away.
-3. The failure classifies `SOLVER_RUNTIME`, routing back to `build_intent`.
+3. The failure classifies `SOLVER_RUNTIME` on NaN (or `ENVIRONMENT` on timeout), routing back appropriately.
 
 ### Parallel solver run (`_run_solver_parallel`, `validation_agent.py:129`)
 

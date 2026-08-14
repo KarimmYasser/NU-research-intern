@@ -14,10 +14,10 @@ read from them; **adding knowledge usually means editing JSON, not code.**
 |---|---|---|
 | `solvers.json` | RAG | v13 solver modules, regimes, required/turbulent fields, descriptions |
 | `boundary_conditions.json` | RAG | per-role BC guidance (role, patch_type, description, notes) |
-| `bc_types.json` | IntentValidator | 27 known BC type names → applicable fields, required/optional keys |
+| `bc_types.json` | IntentValidator | 28 known BC type names (including `totalTemperature`, `cyclicAMI`) → applicable fields, required/optional keys |
 | `thermophysics.json` | RAG, `intent_to_spec`, envelopes | per-species `mixture` → molWeight, Cp, hf, μ, Pr (6 species) |
 | `turbulence_models.json` | IntentValidator | known RAS/LES model names |
-| `v13_tutorials.json` | RAG | fvSchemes/fvSolution snippets per tutorial solver/flow + per-case file trees (252 cases) |
+| `v13_tutorials.json` | RAG | auditable OpenFOAM-13 tutorial index: per-case structure, physics facts, bounded excerpts, patch metadata, and provenance (252 cases) |
 | `physical_envelopes.json` | envelopes | plausible/reject ranges + rationale per numeric field |
 | `case_families.json` | RAG | the semantic taxonomy: 17 case families + human descriptions + include/exclude cues |
 
@@ -36,7 +36,13 @@ matches (falling back to the first entries when no hit). Typed lookups:
 - `get_tutorial_numerics(solver, flow)` — best-matching tutorial snippets.
 
 `format_prompt_context(query)` renders the retrieved items into a markdown block
-appended to the LLM user prompt.
+appended to the LLM user prompt. Every request receives a single, explicitly
+labelled **Primary OpenFOAM v13 Tutorial Template**, selected deterministically
+by `relative_path`. It is the structural starting point: preserve applicable
+field/dictionary structure, but adapt geometry, actual mesh patch names, BC
+values, and physical settings. Never blindly copy tutorial geometry, patch
+names, numerical values, optional files, or unsupported features; registry
+validation remains authoritative.
 
 **Chunkless RAG (case-graph retrieval).** `v13_tutorials.json` is a set of whole
 case records (solver, flow, field set, `file_tree`, captured snippets), not text
@@ -50,10 +56,10 @@ chunks — so retrieval is a **graph walk**, not chunk similarity:
   with an explicit "why" (matched family + reference case structure + the
   optional files it ships — `system/fvConstraints`, `system/functions`, …).
 - `needs_deep_path(query)` is a cheap complexity heuristic (physics vocabulary
-  like vortex/tube/shock/multiphase/species). When it fires,
-  `format_prompt_context` appends the graph `ground`; otherwise the prompt stays
-  on the keyword fast path. The walk is deterministic — no extra LLM calls, so
-  the chunkless approach is cheap.
+  like vortex/tube/shock/multiphase/species). The primary template is always
+  present; when the heuristic fires, `format_prompt_context` additionally
+  appends the graph `ground` for multi-case comparison. The walk is deterministic
+  — no extra LLM calls, so the chunkless approach is cheap.
 - The **family taxonomy** (`case_families.json`) is the hierarchy the agent
   reasons over — 17 families (incompressible internal/external, compressible
   internal/external, thermal-buoyant, combustion, VOF, Euler multiphase,
@@ -61,9 +67,63 @@ chunks — so retrieval is a **graph walk**, not chunk similarity:
   each with a human description. Every tutorial record carries a `family_id`,
   `family_name` and a machine-generated one-line `description`; assignment order
   is explicit override → longest include cue → category base (with exclude veto).
-- `src/knowledge/rebuild_tutorials.py` regenerates the `file_tree`, `family_id`
-  and `description` fields from `temp/openfoam-repo/OpenFOAM-13/tutorials`
-  (run from repo root).
+- `src/knowledge/rebuild_tutorials.py` regenerates `file_tree`, bounded excerpts
+  of `physicalProperties`, `momentumTransport`, `fvSchemes`, and `fvSolution`,
+  plus family-specific excerpts of `phaseProperties`, `thermophysicalProperties`,
+  `dynamicMeshDict`, and `regionProperties`; per-field reference patch BC types
+  (`patch_boundary_types`); `physics_features`; `family_id`; and `description`
+  from `temp/openfoam-repo/OpenFOAM-13/tutorials` (run from repository root).
+  Full tutorial dictionaries are deliberately not injected into every prompt;
+  source paths plus bounded excerpts keep prompt size stable. Patch metadata is
+  reference structure only: actual requested and external-mesh patch names always
+  take precedence.
+
+### Tutorial index schema, provenance, and rebuilds
+
+`v13_tutorials.json` has a top-level `provenance` object and a `tutorials` array.
+Provenance contains `openfoam_revision`, the source-relative `source_root`, a
+SHA-256 hash of the indexed source tree (`source_tree_sha256`), and `rebuilt_utc`.
+This makes generated records traceable to the exact local OpenFOAM input tree.
+Run `python3 src/knowledge/rebuild_tutorials.py` after updating that source tree;
+the source tree is required, while unknown existing records are preserved.
+
+Each tutorial record includes its source-addressable `relative_path`, solver and
+legacy `flow_type`, fields, `file_tree`, normal numerics `snippets`, optional
+`family_snippets`, reference `patch_boundary_types`, and `physics_features`.
+Physics features are derived from actual fields/dictionaries/control settings:
+steady or transient, thermal, multiphase, dynamic mesh, multi-region, turbulent,
+species, and function objects. They are structural evidence; `flow_type` remains
+available but is intentionally secondary because historical tutorial labels are
+not uniformly reliable.
+
+### Physics-aware ranking and prompt contract
+
+Tutorial rank is deterministic: semantic-family membership remains the strongest
+signal, followed by named-case/phrase matches, solver/flow compatibility, and
+physics compatibility. Query wording can request steady/transient, laminar or
+turbulent, thermal, species, dynamic-mesh, multi-region, or multiphase evidence.
+For older indexes that lack `physics_features`, the retriever conservatively
+infers thermal/multiphase/species/dynamic-mesh facts from fields and file-tree
+entries. No requested physics means no compatibility preference.
+
+`retrieve_case_graph()` exposes the selected primary tutorial as
+`template_contract`: source identifier, solver, fields, file tree, physics
+features, patch metadata, family-specific excerpts, and index provenance. The
+prompt renders these specialised excerpts only for the primary template and labels
+them as evidence, not copy-ready configuration. All assembled RAG grounding is
+bounded at 12,000 characters. Truncation is deterministic, happens at a newline
+when possible, and appends an explicit marker; early primary-template grounding is
+therefore retained.
+
+These retrieval signals and prompt evidence **never mutate `CaseIntent` or
+`CaseSpec`, choose a renderer branch, or bypass validation**. Intent validation,
+physical envelopes, and deterministic rendering are authoritative.
+
+`tests/retrieval_benchmarks.json` is the checked-in retrieval benchmark fixture.
+`test_retrieval_benchmarks_have_expected_family_and_template` asserts expected
+family and top-template paths for representative laminar, VOF, compressible
+internal, and supersonic external prompts. Extend this fixture when adding a
+family or changing rank semantics intentionally.
 
 > **Note:** `intent_to_spec()` uses `_RETRIEVER` as a module-level singleton
 > (`ir/intent.py:24`) because loading the JSON files on every call wastes I/O on

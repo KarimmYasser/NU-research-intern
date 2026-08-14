@@ -50,6 +50,34 @@
         "nut": {"type": "nutkWallFunction"},
         "alphat": {"type": "compressible::alphatJayatillekeWallFunction"}
       }
+    },
+    {
+      "role": "symmetry",
+      "patch_type": "symmetryPlane",
+      "description": "Mirror plane for a geometrically and physically symmetric domain.",
+      "notes": "Use symmetryPlane consistently for every solved field. It is not an inlet, outlet, or physical wall and should only be used when the solution is symmetric.",
+      "field_rules": {
+        "all": {"type": "symmetryPlane"}
+      }
+    },
+    {
+      "role": "empty",
+      "patch_type": "empty",
+      "description": "Front/back patch for a one-cell-thick two-dimensional domain.",
+      "notes": "Use empty consistently on both out-of-plane patches and for every solved field; it cannot be mixed with a three-dimensional mesh on the same direction.",
+      "field_rules": {
+        "all": {"type": "empty"}
+      }
+    },
+    {
+      "role": "moving_wall",
+      "patch_type": "wall",
+      "description": "No-penetration wall with a prescribed tangential velocity, as used by lid-driven and rotating-wall cases.",
+      "notes": "Use movingWallVelocity when the wall motion is specified by mesh motion; otherwise use fixedValue U with the physical wall velocity. Pressure remains zeroGradient.",
+      "field_rules": {
+        "U": {"type": "movingWallVelocity"},
+        "p": {"type": "zeroGradient"}
+      }
     }
   ]
 }

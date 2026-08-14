@@ -21,6 +21,171 @@
       "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
       "pressure_unit": "Pa (static pressure)",
       "default_numerics": "compressibleFluid_steadyState"
+    },
+    {
+      "name": "incompressibleVoF",
+      "flow_type": "incompressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 two-phase incompressible volume-of-fluid module for free-surface and interface-capturing flows.",
+      "required_fields": ["U", "p_rgh", "alpha.<phase>"],
+      "turbulent_fields": ["k", "epsilon", "omega", "nut"],
+      "pressure_dimensions": [0, 2, -2, 0, 0, 0, 0],
+      "pressure_unit": "m^2/s^2 (kinematic pressure)",
+      "default_numerics": "incompressibleVoF"
+    },
+    {
+      "name": "incompressibleMultiphaseVoF",
+      "flow_type": "incompressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 n-phase incompressible volume-of-fluid module with pairwise surface tensions.",
+      "required_fields": ["U", "p_rgh", "alpha.<phase>"],
+      "turbulent_fields": ["k", "epsilon", "omega", "nut"],
+      "pressure_dimensions": [0, 2, -2, 0, 0, 0, 0],
+      "pressure_unit": "m^2/s^2 (kinematic pressure)",
+      "default_numerics": "incompressibleVoF"
+    },
+    {
+      "name": "compressibleVoF",
+      "flow_type": "compressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 compressible two-phase volume-of-fluid module with per-phase thermophysical properties.",
+      "required_fields": ["U", "p_rgh", "T", "alpha.<phase>"],
+      "turbulent_fields": ["k", "epsilon", "omega", "nut", "alphat"],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (static pressure)",
+      "default_numerics": "compressibleVoF"
+    },
+    {
+      "name": "compressibleMultiphaseVoF",
+      "flow_type": "compressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 compressible n-phase volume-of-fluid module with per-phase thermophysical properties.",
+      "required_fields": ["U", "p_rgh", "T", "alpha.<phase>"],
+      "turbulent_fields": ["k", "epsilon", "omega", "nut", "alphat"],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (static pressure)",
+      "default_numerics": "compressibleVoF"
+    },
+    {
+      "name": "incompressibleDriftFlux",
+      "flow_type": "incompressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 incompressible dispersed two-phase module using a relative-velocity model.",
+      "required_fields": ["U", "p_rgh", "alpha.<phase>"],
+      "turbulent_fields": ["k", "epsilon", "omega", "nut"],
+      "pressure_dimensions": [0, 2, -2, 0, 0, 0, 0],
+      "pressure_unit": "m^2/s^2 (kinematic pressure)",
+      "default_numerics": "incompressibleVoF"
+    },
+    {
+      "name": "multiphaseEuler",
+      "flow_type": "compressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 Euler-Euler multiphase module with per-phase volume fraction, velocity, and temperature fields.",
+      "required_fields": ["p_rgh", "alpha.<phase>", "U.<phase>", "T.<phase>"],
+      "turbulent_fields": ["k.<phase>", "epsilon.<phase>", "omega.<phase>", "nut.<phase>"],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (static pressure)",
+      "default_numerics": "incompressibleVoF"
+    },
+    {
+      "name": "incompressibleDenseParticleFluid",
+      "flow_type": "incompressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 dense particle-fluid module for two-fluid particle-laden flow.",
+      "required_fields": ["U", "p", "alpha.<phase>"],
+      "turbulent_fields": ["k", "epsilon", "omega", "nut"],
+      "pressure_dimensions": [0, 2, -2, 0, 0, 0, 0],
+      "pressure_unit": "m^2/s^2 (kinematic pressure)",
+      "default_numerics": "incompressibleFluid_limitedLinear"
+    },
+    {
+      "name": "isothermalFilm",
+      "flow_type": "compressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 isothermal thin-film module for liquid-film thickness, pressure, and velocity.",
+      "required_fields": ["delta", "U", "p"],
+      "turbulent_fields": [],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (static pressure)",
+      "default_numerics": "incompressibleVoF"
+    },
+    {
+      "name": "film",
+      "flow_type": "compressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 thermal thin-film module for liquid-film thickness, pressure, temperature, and velocity.",
+      "required_fields": ["delta", "U", "p", "T"],
+      "turbulent_fields": [],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (static pressure)",
+      "default_numerics": "incompressibleVoF"
+    },
+    {
+      "name": "isothermalFluid",
+      "flow_type": "compressible",
+      "regimes": ["laminar"],
+      "description": "OpenFOAM v13 isothermal potential-flow module for free-surface problems.",
+      "required_fields": ["U", "p", "p_rgh"],
+      "turbulent_fields": [],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (static pressure)",
+      "default_numerics": "incompressibleFluid_limitedLinear"
+    },
+    {
+      "name": "shockFluid",
+      "flow_type": "compressible",
+      "regimes": ["laminar"],
+      "description": "OpenFOAM v13 inviscid high-speed compressible-flow module for shocks and supersonic cases.",
+      "required_fields": ["U", "p", "T"],
+      "turbulent_fields": [],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (static pressure)",
+      "default_numerics": "compressibleFluid_steadyState"
+    },
+    {
+      "name": "solidDisplacement",
+      "flow_type": "solid",
+      "regimes": ["solid"],
+      "description": "OpenFOAM v13 linear-elastic solid-displacement module with optional thermal coupling.",
+      "required_fields": ["D"],
+      "turbulent_fields": [],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (stress/pressure scale)",
+      "default_numerics": "incompressibleFluid_upwind"
+    },
+    {
+      "name": "multicomponentFluid",
+      "flow_type": "compressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 multicomponent compressible-flow module with mass-fraction transport fields.",
+      "required_fields": ["U", "p", "T", "Y.<species>"],
+      "turbulent_fields": ["k", "epsilon", "omega", "nut", "alphat"],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (static pressure)",
+      "default_numerics": "compressibleFluid_steadyState"
+    },
+    {
+      "name": "XiFluid",
+      "flow_type": "compressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 premixed-combustion module with flame-wrinkling and species fields.",
+      "required_fields": ["U", "p", "T", "b", "Xi", "Tu"],
+      "turbulent_fields": ["k", "epsilon", "omega", "nut", "alphat"],
+      "pressure_dimensions": [1, -1, -2, 0, 0, 0, 0],
+      "pressure_unit": "Pa (static pressure)",
+      "default_numerics": "incompressibleFluid_limitedLinear"
+    },
+    {
+      "name": "movingMesh",
+      "flow_type": "incompressible",
+      "regimes": ["laminar", "turbulent"],
+      "description": "OpenFOAM v13 dynamic-mesh wrapper around an incompressible fluid case.",
+      "required_fields": ["U", "p"],
+      "turbulent_fields": ["k", "epsilon", "omega", "nut"],
+      "pressure_dimensions": [0, 2, -2, 0, 0, 0, 0],
+      "pressure_unit": "m^2/s^2 (kinematic pressure)",
+      "default_numerics": "incompressibleFluid_limitedLinear"
     }
   ]
 }

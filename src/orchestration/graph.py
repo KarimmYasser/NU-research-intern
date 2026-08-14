@@ -309,8 +309,11 @@ def preflight_case(state: CaseGraphState) -> dict:
             evidence_reference=result.as_evidence()[:100] if result else None,
         ))
     print(f"      -> Preflight: {result.verdict.name} "
-          f"({len([f for f in result.audit if f.level == 'fail'])} FAIL, "
-          f"{len([f for f in result.audit if f.level == 'warn'])} WARN)", flush=True)
+          f"({len([f for f in result.audit if f.level == 'fail'])} static FAIL, "
+          f"{len([f for f in result.audit if f.level == 'warn'])} static WARN)"
+          + (f" — {result.message}" if result.message else ""), flush=True)
+    if result.dry_run and result.dry_run.prediction != "PASS":
+        print(f"      -> Dry run ({result.dry_run.prediction}): {result.dry_run.message}", flush=True)
     return {"preflight": result, "error_feedback": feedback, "remediation_history": history}
 
 

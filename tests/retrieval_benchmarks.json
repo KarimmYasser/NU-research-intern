@@ -1,0 +1,22 @@
+[
+  {
+    "query": "laminar lid driven cavity",
+    "top_path_contains": "incompressibleFluid/cavity",
+    "family_id": "flow_incompressible_internal"
+  },
+  {
+    "query": "transient dam break water VOF free surface",
+    "top_path_contains": "damBreak",
+    "family_id": "multiphase_vof"
+  },
+  {
+    "query": "compressible vortex tube with swirl",
+    "top_path_contains": "fluid/",
+    "family_id": "flow_compressible_internal"
+  },
+  {
+    "query": "supersonic aerofoil oblique shock",
+    "top_path_contains": "obliqueShock",
+    "family_id": "flow_compressible_external"
+  }
+]

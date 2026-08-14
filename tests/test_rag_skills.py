@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -36,6 +37,86 @@ def test_rag_prompt_formatting():
     assert "OpenFOAM v13 Domain Knowledge" in context
     assert "fluid" in context
     assert "cyclic" in context
+
+
+def test_primary_template_is_mandatory_and_adaptable_for_simple_prompt():
+    retriever = KnowledgeRetriever()
+    context = retriever.format_prompt_context("incompressible lid driven cavity")
+    assert context.count("### Primary OpenFOAM v13 Tutorial Template") == 1
+    assert "tutorials/incompressibleFluid/cavity" in context
+    assert "Use this tutorial as the structural starting point" in context
+    assert "Do not blindly copy" in context
+
+
+def test_primary_template_is_explicit_and_deterministic():
+    retriever = KnowledgeRetriever()
+    query = "compressible vortex tube with swirl"
+    first = retriever.retrieve_case_graph(query)
+    second = retriever.retrieve_case_graph(query)
+    assert first["primary_template"] is first["cases"][0]
+    assert first["primary_template"]["relative_path"] == second["primary_template"]["relative_path"]
+    assert first["primary_template"]["relative_path"]
+
+
+def test_primary_templates_select_sensible_representative_cases():
+    retriever = KnowledgeRetriever()
+    expectations = {
+        "lid driven cavity": "incompressibleFluid/cavity",
+        "dam break water VOF": "damBreak",
+        "compressible vortex tube": "fluid/",
+        "supersonic aerofoil oblique shock": "obliqueShock",
+    }
+    for query, expected_path_fragment in expectations.items():
+        primary = retriever.retrieve_case_graph(query)["primary_template"]
+        assert primary is not None
+        assert expected_path_fragment in primary["relative_path"]
+
+
+def test_phrase_matching_requires_case_name_word_order():
+    retriever = KnowledgeRetriever()
+    assert retriever._phrase_match_score("simulate a dam break", ["dam", "break"]) == 24.0
+    assert retriever._phrase_match_score("simulate a dam break", ["three", "d", "dam", "break"]) == 24.0
+    assert retriever._phrase_match_score("simulate a break dam", ["dam", "break"]) == 0.0
+
+
+def test_primary_template_includes_reference_patch_structure_not_patch_copying():
+    retriever = KnowledgeRetriever()
+    context = retriever.format_prompt_context("lid driven cavity")
+    assert "Reference boundary-patch structure:" in context
+    assert "movingWall (U=fixedValue" in context
+    assert "provided-mesh names are authoritative" in context
+
+
+def test_physics_compatibility_and_family_excerpt_are_retrieval_evidence_only():
+    retriever = KnowledgeRetriever()
+    graph = retriever.retrieve_case_graph("transient dam break water VOF free surface")
+    template = graph["primary_template"]
+    assert template is not None
+    assert "multiphase" in template.get("physics_features", [])
+    assert "transient" in template.get("physics_features", [])
+    assert graph["template_contract"]["source"].startswith("tutorials/")
+    context = retriever.format_prompt_context("transient dam break water VOF free surface")
+    assert "Reference specialised dictionary excerpt (phaseProperties" in context
+    assert "evidence only, do not copy wholesale" in context
+
+
+def test_prompt_context_budget_is_deterministic_and_marked():
+    retriever = KnowledgeRetriever()
+    oversized = "x\n" * 20_000
+    bounded = retriever._apply_prompt_budget(oversized)
+    assert len(bounded) <= 12_000
+    assert bounded.endswith("[Prompt grounding truncated deterministically; primary template retained above.]")
+
+
+def test_retrieval_benchmarks_have_expected_family_and_template():
+    retriever = KnowledgeRetriever()
+    benchmarks = json.loads((Path(__file__).parent / "retrieval_benchmarks.json").read_text())
+    for benchmark in benchmarks:
+        graph = retriever.retrieve_case_graph(benchmark["query"])
+        primary = graph["primary_template"]
+        assert primary is not None, benchmark
+        assert benchmark["top_path_contains"] in primary["relative_path"], benchmark
+        assert graph["families"] and graph["families"][0]["id"] == benchmark["family_id"], benchmark
 
 
 # ─── Chunkless RAG: case-graph retrieval ─────────────────────────────────────
@@ -78,9 +159,10 @@ def test_deep_path_surfaces_optional_files():
     system_files = {f for c in graph["cases"] for f in (c.get("file_tree") or {}).get("system", [])}
     assert "functions" in system_files or "fvConstraints" in system_files or \
         "setFieldsDict" in system_files
-    # A flat query stays off the deep path entirely.
+    # A flat query omits the expanded graph but still gets its primary template.
     plain = retriever.format_prompt_context("lid driven cavity")
-    assert "Reference Case" not in plain
+    assert "--- OpenFOAM Reference Case (chunkless graph retrieval) ---" not in plain
+    assert "### Primary OpenFOAM v13 Tutorial Template" in plain
 
 
 def test_family_hierarchy_reasons_by_description_not_words():

@@ -22,7 +22,18 @@ class LLMConfig:
     # a non-empty string to be passed. LLM_GATEWAY_API_KEY is used for the
     # Siemens SDC LLM Gateway (cloud, dev/testing only - see .env.example);
     # falls back to "not-needed" for local Ollama.
-    api_key: str = field(default_factory=lambda: os.environ.get("LLM_GATEWAY_API_KEY") or "not-needed")
+    api_key: str = field(
+        default_factory=lambda: os.environ.get("LLM_GATEWAY_API_KEY") or "not-needed",
+        repr=False,
+    )
+
+    def redacted(self) -> dict[str, str]:
+        """Return configuration safe to include in diagnostics or structured logs."""
+        return {
+            "base_url": self.base_url,
+            "model": self.model,
+            "api_key": "<redacted>" if self.api_key != "not-needed" else "not-needed",
+        }
 
 
 def make_client(config: LLMConfig | None = None) -> OpenAI:

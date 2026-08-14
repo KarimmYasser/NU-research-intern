@@ -191,6 +191,23 @@
       "description": "Pressure BC based on stagnation (total) pressure. Used at compressible inlets. Requires p0 = stagnation pressure."
     },
     {
+      "type": "totalTemperature",
+      "applicable_fields": [
+        "T"
+      ],
+      "required_keys": [
+        "T0"
+      ],
+      "optional_keys": [
+        "value",
+        "U",
+        "phi",
+        "psi",
+        "gamma"
+      ],
+      "description": "Temperature BC based on stagnation (total) temperature T0. Used at compressible inlets."
+    },
+    {
       "type": "fixedFluxPressure",
       "applicable_fields": [
         "p"
@@ -419,7 +436,7 @@
         "intensity",
         "value"
       ],
-      "optional_keys: [],": [],
+      "optional_keys": [],
       "description": "Computes k from turbulent intensity (fraction of mean velocity, e.g. 0.05 for 5%)."
     },
     {

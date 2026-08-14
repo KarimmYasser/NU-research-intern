@@ -4,10 +4,10 @@
 The JSON drives the RAG file-tree retrieval (retrieve_case_graph): each tutorial
 record carries the case's *structure* — the solver, flow type, field set, and a
 `file_tree` listing every solver-relevant file under 0/, constant/ and system/
-(optional files like system/fvConstraints and system/functions included) plus the
-captured fvSchemes/fvSolution/physicalProperties snippets. Keeping the tree in
-the JSON (not re-walking the repo at runtime) keeps KnowledgeRetriever a pure
-read of data, mirroring every other registry.
+ (optional files like system/fvConstraints and system/functions included) plus
+ bounded source excerpts from the core physical/numerical dictionaries. Keeping
+ this metadata in JSON (not re-walking the repo at runtime) keeps
+ KnowledgeRetriever a pure read of data, mirroring every other registry.
 
 Run from repo root:
     python src/knowledge/rebuild_tutorials.py
@@ -19,7 +19,9 @@ cases are preserved as-is.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,20 @@ _SKIP_FILES = {
     "extrudeMeshDict", "cartesianMeshDict", "rotateMeshDict", "setSet",
 }
 _SKIP_SUFFIX = (".orig", ".gz", ".png", ".stl", ".obj", ".md")
+_SNIPPET_FILES = {
+    "physicalProperties": "constant/physicalProperties",
+    "momentumTransport": "constant/momentumTransport",
+    "fvSchemes": "system/fvSchemes",
+    "fvSolution": "system/fvSolution",
+}
+_SNIPPET_MAX_CHARS = 1_200
+_FAMILY_SNIPPET_FILES = {
+    "phaseProperties": "phaseProperties",
+    "thermophysicalProperties": "thermophysicalProperties",
+    "dynamicMeshDict": "dynamicMeshDict",
+    "regionProperties": "regionProperties",
+}
+_FAMILY_SNIPPET_MAX_CHARS = 800
 
 
 def _case_file_tree(case_dir: Path) -> dict[str, list[str]]:
@@ -63,6 +79,133 @@ def _case_file_tree(case_dir: Path) -> dict[str, list[str]]:
         if names:
             tree[top] = sorted(names)
     return tree
+
+
+def _dictionary_snippets(case_dir: Path) -> dict[str, str]:
+    """Return bounded, reproducible excerpts from primary-template dictionaries."""
+    snippets: dict[str, str] = {}
+    for name, relative_path in _SNIPPET_FILES.items():
+        path = case_dir / relative_path
+        if path.is_file():
+            snippets[name] = path.read_text(encoding="utf-8", errors="replace")[:_SNIPPET_MAX_CHARS]
+        else:
+            snippets[name] = ""
+    return snippets
+
+
+def _family_dictionary_snippets(case_dir: Path) -> dict[str, str]:
+    """Capture bounded auxiliary dictionaries relevant to specialised families.
+
+    A tutorial can carry these files below a region subdirectory.  The relative
+    path is retained as the key so prompt evidence remains source-addressable
+    and does not pretend that a multi-region dictionary belongs at constant/.
+    """
+    snippets: dict[str, str] = {}
+    for label, filename in _FAMILY_SNIPPET_FILES.items():
+        candidates = sorted(p for p in case_dir.rglob(filename) if p.is_file())
+        for path in candidates[:2]:
+            relative = path.relative_to(case_dir).as_posix()
+            key = label if len(candidates) == 1 else f"{label} ({relative})"
+            snippets[key] = path.read_text(encoding="utf-8", errors="replace")[:_FAMILY_SNIPPET_MAX_CHARS]
+    return snippets
+
+
+def _physics_features(case_dir: Path, tree: dict[str, list[str]]) -> list[str]:
+    """Derive retrieval-only compatibility facts from real tutorial structure."""
+    fields = tree.get("0", [])
+    constants = tree.get("constant", [])
+    system = tree.get("system", [])
+    features: set[str] = set()
+    if "T" in fields or any(name.startswith("T.") for name in fields):
+        features.add("thermal")
+    if any(name.startswith("alpha.") for name in fields) or "phaseProperties" in constants:
+        features.add("multiphase")
+    if "dynamicMeshDict" in constants:
+        features.add("dynamic_mesh")
+    if "regionProperties" in constants:
+        features.add("multi_region")
+    if any(name in fields or name.startswith(f"{name}.") for name in ("k", "epsilon", "omega", "nut", "alphat")):
+        features.add("turbulent")
+    if any(name.startswith("Y") or name in {"b", "Xi", "Tu"} for name in fields):
+        features.add("species")
+    control = case_dir / "system" / "controlDict"
+    if control.is_file():
+        control_text = control.read_text(encoding="utf-8", errors="replace")
+        features.add("steady" if "steadyState" in control_text else "transient")
+    if "functions" in system:
+        features.add("function_objects")
+    return sorted(features)
+
+
+def _source_tree_sha256() -> str:
+    """Hash indexed tutorial inputs so regenerated records are auditable."""
+    digest = hashlib.sha256()
+    for path in sorted(p for p in TUTORIALS_ROOT.rglob("*") if p.is_file()):
+        relative = path.relative_to(TUTORIALS_ROOT).as_posix().encode()
+        digest.update(relative + b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def _braced_body(text: str, label: str) -> str | None:
+    """Return the balanced body of a named OpenFOAM dictionary block."""
+    match = re.search(rf"\b{re.escape(label)}\s*\{{", text)
+    if not match:
+        return None
+    start = text.find("{", match.start())
+    depth = 0
+    for index in range(start, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1:index]
+    return None
+
+
+def _top_level_blocks(text: str) -> list[tuple[str, str]]:
+    """Parse direct ``name { ... }`` blocks without a full dictionary parser."""
+    blocks: list[tuple[str, str]] = []
+    index = 0
+    while index < len(text):
+        match = re.search(r"(?:^|\n)\s*([^\s{}]+)\s*\{", text[index:])
+        if not match:
+            break
+        name = match.group(1).strip('"')
+        start = index + match.start() + match.group(0).rfind("{")
+        depth = 0
+        for end in range(start, len(text)):
+            if text[end] == "{":
+                depth += 1
+            elif text[end] == "}":
+                depth -= 1
+                if depth == 0:
+                    blocks.append((name, text[start + 1:end]))
+                    index = end + 1
+                    break
+        else:
+            break
+    return blocks
+
+
+def _patch_boundary_types(case_dir: Path) -> dict[str, dict[str, str]]:
+    """Index tutorial 0/ patch names and per-field BC types as reference metadata."""
+    patches: dict[str, dict[str, str]] = {}
+    zero_dir = case_dir / "0"
+    if not zero_dir.is_dir():
+        return patches
+    for field_path in sorted(p for p in zero_dir.iterdir() if p.is_file()):
+        field_name = re.sub(r"\.orig$", "", field_path.name)
+        text = field_path.read_text(encoding="utf-8", errors="replace")
+        boundary = _braced_body(text, "boundaryField")
+        if boundary is None:
+            continue
+        for patch_name, body in _top_level_blocks(boundary):
+            bc_match = re.search(r"\btype\s+([^;\s]+)\s*;", body)
+            if bc_match:
+                patches.setdefault(patch_name, {})[field_name] = bc_match.group(1)
+    return {name: dict(sorted(field_types.items())) for name, field_types in sorted(patches.items())}
 
 
 def _assign_family(case_name: str, category: str) -> str | None:
@@ -164,14 +307,26 @@ def rebuild() -> None:
         if tree:
             tut["file_tree"] = tree
             updated += 1
+        tut["snippets"] = _dictionary_snippets(case_dir)
+        tut["family_snippets"] = _family_dictionary_snippets(case_dir)
+        tut["physics_features"] = _physics_features(case_dir, tree)
+        tut["patch_boundary_types"] = _patch_boundary_types(case_dir)
         family = _assign_family(tut.get("case_name", ""), tut.get("category", ""))
         if family:
             tut["family_id"] = family
             tut["family_name"] = family_names.get(family, family)
         tut["description"] = _describe_case(tut, tut.get("family_name", ""))
-    out = {"tutorials": tutorials} if isinstance(data, dict) else tutorials
+    out = {
+        "provenance": {
+            "openfoam_revision": "OpenFOAM-13",
+            "source_root": "temp/openfoam-repo/OpenFOAM-13/tutorials",
+            "source_tree_sha256": _source_tree_sha256(),
+            "rebuilt_utc": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        },
+        "tutorials": tutorials,
+    } if isinstance(data, dict) else tutorials
     TARGET.write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"Wrote file trees + family ids + descriptions for {updated} tutorial cases to {TARGET}")
+    print(f"Wrote tutorial structure, physics features, excerpts, and provenance for {updated} cases to {TARGET}")
 
 
 if __name__ == "__main__":

@@ -181,7 +181,7 @@ class IntentValidator:
         if not extra:
             return []
         errors: list[IntentValidationError] = []
-        for rel in extra:
+        for rel, content in extra.items():
             if not isinstance(rel, str) or not rel.strip():
                 errors.append(IntentValidationError(
                     field=f"extra_files[{rel!r}]",
@@ -194,6 +194,13 @@ class IntentValidator:
                     field=f"extra_files[{rel}]",
                     message="extra_files paths must stay inside the case directory.",
                 ))
+            if rel == "system/fvConstraints" and isinstance(content, str):
+                # An empty constraints { } block or sub-block without 'type' causes fatal IO error in OpenFOAM v13
+                if re.search(r"^\s*constraints\s*\{\s*\}", content, re.MULTILINE):
+                    errors.append(IntentValidationError(
+                        field="extra_files[system/fvConstraints]",
+                        message="Empty 'constraints { }' block in system/fvConstraints is invalid in OpenFOAM v13 (each constraint subdictionary requires 'type <name>;'). Remove the file if unused or provide valid constraints.",
+                    ))
         return errors
 
     def _check_turbulence_model(self, intent: CaseIntent) -> list[IntentValidationError]:
