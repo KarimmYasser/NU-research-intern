@@ -260,9 +260,14 @@ def _default_bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compr
     for f in active_fields:
         a = _anchor(f)
         if a == "U":
-            bc[f] = FieldBC(type="fixedValue", value=vec(p.velocity or (0, 0, 0))) if is_inlet_like \
-                else FieldBC(type="zeroGradient") if role == "outlet" \
-                else FieldBC(type="noSlip")
+            if is_inlet_like:
+                bc[f] = FieldBC(type="fixedValue", value=vec(p.velocity or (0, 0, 0)))
+            elif role == "outlet":
+                # For compressible flow, inletOutlet prevents backflow divergence at outlets
+                bc[f] = FieldBC(type="inletOutlet", value="uniform (0 0 0)", inletValue="uniform (0 0 0)") if compressible \
+                    else FieldBC(type="zeroGradient")
+            else:
+                bc[f] = FieldBC(type="noSlip")
         elif a == "p":
             if is_wall:
                 bc[f] = FieldBC(type="fixedFluxPressure", value="uniform 0") if compressible \
@@ -283,7 +288,8 @@ def _default_bc_for_role(role: PatchRole, p: PatchIntent, turbulent: bool, compr
                 t_val = p.temperature if p.temperature is not None else default_temp
                 bc[f] = FieldBC(type="fixedValue", value=f"uniform {_num(t_val)}")
             elif role == "outlet":
-                bc[f] = FieldBC(type="zeroGradient")
+                bc[f] = FieldBC(type="inletOutlet", value=f"uniform {_num(default_temp)}", inletValue=f"uniform {_num(default_temp)}") if compressible \
+                    else FieldBC(type="zeroGradient")
             else:
                 if p.temperature is not None:
                     bc[f] = FieldBC(type="fixedValue", value=f"uniform {_num(p.temperature)}")
@@ -638,15 +644,30 @@ def _cfl_delta_t(intent: CaseIntent) -> float:
     """A conservative first deltaT from a Courant estimate (cell size / velocity).
 
     General, scale-aware default: no case-specific constants. Clamped to
-    [1e-6, 0.1] so absurd inputs can't produce a runaway timestep.
+    [1e-7, 0.1] so absurd inputs can't produce a runaway timestep.
     """
     if intent.box_size is None:
         return 1e-4
     dx = min(
         b / n for b, n in zip(intent.box_size, intent.cells) if n > 0
     )
-    dt = 0.5 * dx / _max_velocity(intent)
-    return max(1e-6, min(0.1, dt))
+    co_target = 0.2 if intent.flow_type == "compressible" else 0.5
+    dt = co_target * dx / _max_velocity(intent)
+    return max(1e-7, min(0.1, dt))
+
+
+def _external_mesh_delta_t(intent: CaseIntent) -> float:
+    """Scale-aware starting deltaT for external meshes based on peak velocity.
+
+    High-speed compressible flows (e.g. 50-200 m/s in nozzles) on fine mesh
+    nozzle throats (dx ~ 1e-4..1e-3 m) require a small initial deltaT (1e-6..1e-5 s)
+    to prevent first-step Courant explosion. adjustTimeStep will ramp deltaT up.
+    """
+    vmax = _max_velocity(intent)
+    dx_est = 1e-3  # conservative feature scale estimate
+    co_target = 0.2 if intent.flow_type == "compressible" else 0.5
+    dt = co_target * dx_est / vmax
+    return max(1e-7, min(1e-3, dt))
 
 
 def _time_control(intent: CaseIntent) -> TimeControl:
@@ -662,13 +683,14 @@ def _time_control(intent: CaseIntent) -> TimeControl:
             start_time=0, end_time=1000, delta_t=1.0, write_interval=10,
             adjust_time_step="no",
         )
+    max_co = 0.5 if intent.flow_type == "compressible" else 0.8
     if intent.geometry == "box":
         return TimeControl(
             start_time=0, end_time=0.1, delta_t=_cfl_delta_t(intent), write_interval=20,
-            adjust_time_step="yes", max_co=0.5,
+            adjust_time_step="yes", max_co=max_co,
         )
-    # external mesh: scale unknown, so start conservative and let the adaptivity work.
+    # external mesh: scale unknown, so start velocity-scaled and let the adaptivity work.
     return TimeControl(
-        start_time=0, end_time=0.1, delta_t=1e-4, write_interval=20,
-        adjust_time_step="yes", max_co=0.5,
+        start_time=0, end_time=0.1, delta_t=_external_mesh_delta_t(intent), write_interval=20,
+        adjust_time_step="yes", max_co=max_co,
     )

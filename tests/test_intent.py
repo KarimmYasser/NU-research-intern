@@ -314,6 +314,53 @@ def test_initial_U_seeded_from_dominant_inlet():
     assert u_field.internal_field == "uniform (0 0 200)"
 
 
+def test_compressible_outlet_uses_inlet_outlet_bc():
+    intent = CaseIntent(
+        regime="turbulent", flow_type="compressible",
+        geometry="external_mesh",
+        patches=[
+            PatchIntent(name="inlet", role="inlet", velocity=(50, 0, 0)),
+            PatchIntent(name="outlet", role="outlet", pressure=101325),
+            PatchIntent(name="walls", role="wall"),
+        ],
+    )
+    spec = intent_to_spec(intent)
+    out_patch = next(p for p in spec.patches if p.name == "outlet")
+    assert out_patch.bc["U"].type == "inletOutlet"
+    assert out_patch.bc["T"].type == "inletOutlet"
+
+
+def test_external_mesh_adaptive_delta_t_scales_with_velocity():
+    # Fast flow (200 m/s) -> small initial deltaT to avoid first-step shock
+    fast_intent = CaseIntent(
+        regime="turbulent", flow_type="compressible",
+        geometry="external_mesh",
+        patches=[
+            PatchIntent(name="inlet", role="inlet", velocity=(0, 0, 200)),
+            PatchIntent(name="outlet", role="outlet", pressure=100000),
+            PatchIntent(name="walls", role="wall"),
+        ],
+    )
+    fast_spec = intent_to_spec(fast_intent)
+    assert fast_spec.time.adjust_time_step == "yes"
+    assert fast_spec.time.max_co == 0.5
+    assert fast_spec.time.delta_t <= 1e-5
+
+    # Slow flow (1 m/s) -> standard initial deltaT
+    slow_intent = CaseIntent(
+        regime="turbulent", flow_type="incompressible",
+        geometry="external_mesh",
+        patches=[
+            PatchIntent(name="inlet", role="inlet", velocity=(0, 0, 1)),
+            PatchIntent(name="outlet", role="outlet", pressure=0),
+            PatchIntent(name="walls", role="wall"),
+        ],
+    )
+    slow_spec = intent_to_spec(slow_intent)
+    assert slow_spec.time.adjust_time_step == "yes"
+    assert slow_spec.time.delta_t >= 1e-4
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in sorted(globals().items()):

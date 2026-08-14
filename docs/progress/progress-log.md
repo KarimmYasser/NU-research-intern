@@ -23,9 +23,13 @@ entries at the top. See `src/README.md` for the code layout and
 ### 4. CLI Execution Flags (`src/__main__.py`, `orchestration/graph.py`)
 - **CLI Options:** Added `--procs`, `--timeout`, and `--image` flags to `python -m src run`, propagating them through `CaseGraphState` to configure `ValidationAgent` in both preflight and validation steps.
 
-### 5. Test Suite Status
-- Added unit tests across `tests/test_validation.py`, `tests/test_preflight.py`, and `tests/test_renderer.py`.
-- Full repository test suite passed cleanly: **170 passed in 1.07s**.
+### 5. Physics & Numerical Stability Enhancements (`ir/intent.py`)
+- **Compressible Outlet Backflow Protection:** Defaulted compressible outlet boundary conditions for velocity (`U`) and temperature (`T`) to `inletOutlet` with backflow guards (`inletValue uniform (0 0 0)` for `U` and `inletValue uniform T_ambient` for `T`), preventing unphysical reverse-flow numerical instability.
+- **Velocity-Scaled Starting Timestep on External Meshes:** Added `_external_mesh_delta_t` which scales the initial `deltaT` inversely with peak prescribed velocity ($dt \sim 0.2 \cdot dx_{est} / V_{max}$), ensuring high-speed compressible cases (e.g. 50-200 m/s nozzle flows) start with sub-Courant timesteps ($10^{-6}$–$10^{-5}$ s) while `adjustTimeStep yes;` and `maxCo 0.5` ramp the step up dynamically.
+
+### 6. Test Suite Status
+- Added unit tests across `tests/test_validation.py`, `tests/test_preflight.py`, `tests/test_renderer.py`, and `tests/test_intent.py`.
+- Full repository test suite passed cleanly: **172 passed in 1.21s**.
 
 ## 2026-08-13 — Pipeline Accuracy & Reliability Boosters
 
