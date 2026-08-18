@@ -1,0 +1,16 @@
+{
+  "name": "openfoam-agent-harness-pi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi adapter for the OpenFOAM v13 agent harness (SESC-2026-02). Bridges Pi to the Python harness over JSON-RPC and ships the OpenFOAM behaviour skill.",
+  "keywords": ["pi-package", "openfoam", "cfd"],
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

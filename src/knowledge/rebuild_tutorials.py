@@ -18,8 +18,8 @@ cases are preserved as-is.
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -232,7 +232,7 @@ def _assign_family(case_name: str, category: str) -> str | None:
     families_file = REPO_ROOT / "src" / "knowledge" / "case_families.json"
     try:
         families = json.loads(families_file.read_text(encoding="utf-8")).get("families", [])
-    except Exception:
+    except (OSError, json.JSONDecodeError, TypeError):
         return None
 
     name_l = case_name.lower()
@@ -293,7 +293,7 @@ def rebuild() -> None:
     families_file = REPO_ROOT / "src" / "knowledge" / "case_families.json"
     try:
         family_names = {f["id"]: f["name"] for f in json.loads(families_file.read_text(encoding="utf-8"))["families"]}
-    except Exception:
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
         family_names = {}
     updated = 0
     for tut in tutorials:

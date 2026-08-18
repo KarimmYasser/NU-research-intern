@@ -55,7 +55,12 @@ Each node is a plain function taking and returning dicts (or mutating state):
   `[preflight] ...` evidence string into `error_feedback` (see
   `validation-and-preflight.md` §3).
 - **`validate_case`** (`graph.py:258`) — the Docker ladder
-  (`skip_mesh_generation = bool(mesh_dir)`); records patch resolution stats.
+  (`skip_mesh_generation = bool(mesh_dir)`); records patch resolution stats. On success
+  it also archives the configuration and log to `<case>/.runs/<stamp>/` via
+  `validation.snapshot.snapshot_run` — the loop re-renders the case in place on the next
+  attempt, so a passing configuration would otherwise be destroyed by the retry that
+  follows it. Archiving failures are printed, never raised
+  (`validation-and-preflight.md` §3b).
 
 ### Routing
 

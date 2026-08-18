@@ -49,7 +49,7 @@ class KnowledgeRetriever:
             return {}
         try:
             return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             return {}
 
     def search(self, query: str, top_k: int = 3) -> dict[str, list[dict[str, Any]]]:
@@ -97,7 +97,7 @@ class KnowledgeRetriever:
         try:
             tut_data = json.loads(tutorials_file.read_text(encoding="utf-8"))
             return tut_data.get("tutorials", []) if isinstance(tut_data, dict) else tut_data
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             return []
 
     def tutorial_provenance(self) -> dict[str, Any]:
@@ -473,8 +473,10 @@ class KnowledgeRetriever:
         lines = [
             "\n### Primary OpenFOAM v13 Tutorial Template",
             f"Source: tutorials/{self._tutorial_identifier(template)}",
-            f"Case: {template.get('case_name', 'unknown')} "
-            f"(solver={template.get('solver')}, flow={template.get('flow_type')})",
+            (
+                f"Case: {template.get('case_name', 'unknown')} "
+                f"(solver={template.get('solver')}, flow={template.get('flow_type')})"
+            ),
         ]
         if template.get("family_name"):
             lines.append(f"Family: {template['family_name']}")

@@ -4,6 +4,136 @@ Running log of concrete milestones on the `src/` architecture spike. Append new
 entries at the top. See `src/README.md` for the code layout and
 `docs/architecture/phase-ii-architecture.md` for the design this validates.
 
+## 2026-08-18 — RHVT Verified Running: Four Preflight/Harness Bugs Found by Actually Running It
+
+**Focus:** Re-running the preserved RHVT cases in Docker to capture evidence for the
+report. The runs failed — and exposed three defects in our own tooling on the way.
+
+### 1. Bugs found and fixed (all with regression tests)
+- **`run_bounded_dry_run` never worked from the harness.** `tools.py` passed the
+  `ValidationAgent` object where `bounded_run_predict` expects `callable(case_dir)`,
+  raising `'ValidationAgent' object is not callable`. Now passes a `_bounded_foamrun`
+  closure, matching the graph's preflight path. Level C was unreachable via MCP until now.
+- **Level A rejected valid regex patch entries.** `boundaryField` supports quoted regexes
+  (`"inlet_.*"`); the audit did a plain set difference and reported **6 false FAILs** on a
+  valid case. Now matches mesh patches against regex entries, and cross-field consistency
+  compares *effective coverage* instead of literal entry names (`_uncovered_patches`,
+  `_patch_covered` in `src/preflight/audit.py`).
+- **A first-solve NaN was diagnosed as a dictionary error.** When the NaN-abort fires
+  before any `Time =` marker is flushed, `predict_from_residuals` saw 0 steps and blamed
+  "a dictionary/field error", misdirecting the self-correction loop toward syntax when the
+  problem is numerics. `bounded_run_predict` now scans the log for non-finite residuals
+  and reports divergence with the offending field. (`_SOLVE_RE` only captures the
+  *initial* residual, so the check is line-based — the NaN is in `Final residual`.)
+
+### 2. A fourth bug — the audit condemned the working case
+`loop_block_mismatch` FAILed any `steadyState` ddt paired with a `PIMPLE` block. That is
+wrong for the v13 `fluid` module, and it is why `_w10_rhvt` was skipped during
+re-verification. Downgraded to a warning; the evidenced opposite direction (transient ddt
+with a SIMPLE-only fvSolution) still fails. **A false FAIL that hides a working
+configuration is the most expensive bug class here** — the ladder catches a bad case
+downstream, but nothing catches a good case that was thrown away.
+
+### 3. RHVT: verified working
+Swept all nine preserved cases through the ladder. `_w10_rhvt` on **10 MPI ranks**
+completes 10 bounded steps in 131 s with **every field's residual decaying** (`Ux`
+-0.10/step, `Uy` -0.15, `Uz` -0.16, `h` -0.15, `k` -0.17, `epsilon` -0.08). Pressure is
+the laggard (0.059 -> 0.091) — slow convergence, matching the original observation.
+Level C correctly returns WARN, not PASS.
+
+Durable record: **`docs/evidence/rhvt-residuals-2026-08-18.md`** (residual table plus the
+full nine-case sweep). The other RHVT dirs fail for distinct, informative reasons: NaN on
+`h` (transient Euler variants), a missing `h` solver entry, an undefined `smoother`, a
+malformed `p` entry.
+
+**Process gap:** case directories are re-rendered in place, so a working configuration is
+silently overwritten by the next attempt, and no solver log is archived — nothing but the
+dictionaries survived. Snapshot log + config the moment a run behaves.
+
+### 4. Run snapshots — the process gap closed in code
+Guidance ("remember to archive a run that works") was replaced by
+`src/validation/snapshot.py`. On a **passing** ladder, both entry points now copy
+`system/`, `0/` and `constant/` (minus mesh) plus the solver log and a manifest into
+`<case>/.runs/<microsecond-stamp>-<stage>/`:
+
+- `harness.tools.validate_case_docker` returns `snapshot_dir`; the graph's
+  `validate_case` node prints it. Verified live against Docker on both paths.
+- **64 kB from the 374 MB RHVT case**; 176 kB for a 1000-step cavity after log
+  head/tail trimming (was 1.7 MB).
+- Bounded: 10 snapshots retained. Never fails a passing run (OSError reported, not
+  raised). `clean_case_directory` leaves `.runs/` alone.
+- Names carry microseconds. A collision *suffix* was implemented first and a test caught
+  it: pruning frees earlier names, so the next snapshot reuses one and sorts itself to
+  the front of the history.
+
+Agent rules updated accordingly — the model is told where a passing run is archived, not
+asked to remember to copy files.
+
+### 5. A fifth bug — v13 drift in our own tool
+`get_case_status` looked for `application <binary>;` in controlDict, the pre-v12
+convention. Every correctly generated v13 case (which uses `solver <module>;`) therefore
+reported `solver: unknown`. Verified on real cases: `e2e_cavity` now reports
+`incompressibleFluid`, `_w10_rhvt` reports `fluid`. A legacy `application` entry is still
+read, but returns a warning that v13 will not run the case. The same tool now also lists
+`archived_runs`, so the settings that worked are findable.
+
+### 6. Test suite
+**237 pytest tests** (+21) and **8 adapter tests**, ruff clean. New coverage: regex patch
+coverage, first-solve-NaN diagnosis, steady+PIMPLE accepted, transient+SIMPLE still
+rejected, v13 solver-entry detection, and thirteen snapshot tests (mesh exclusion, accumulation, pruning, log trimming,
+clean-safety, graph archiving, archive-failure tolerance).
+
+## 2026-08-18 — Pi-First Harness UX, Single-Source Agent Rules & the v13-vs-v9 Guardrail
+
+**Focus:** Turning the tool harness into something a CFD engineer can install and operate
+without software-engineering knowledge, and fixing a correctness bug in the agent guidance
+itself. See [`../development/agent-harness-and-pi.md`](../development/agent-harness-and-pi.md).
+
+### 1. Two-command product surface (`setup.sh` / `start.sh` / `check.sh`)
+- Root-level wrappers over `scripts/`; Pi is the default with no flags. `setup_harness.sh`
+  no longer defaults to Cline or rejects Pi; `run_agent.sh` no longer tries Claude first.
+- Setup is idempotent, backs up `.pi/settings.json` before touching it, writes only project
+  settings (never global pi config or credentials), and distinguishes *pi missing* /
+  *unauthenticated* / *adapter missing* / *python broken* / *docker down* (a warning, not a
+  failure). Verbose output goes to `.harness/logs/`.
+
+### 2. Pi adapter package (`integrations/pi/`)
+- `extensions/openfoam-tools.ts` starts the Python harness as a child process, speaks
+  newline-delimited JSON-RPC, and **dynamically registers all 19 tools**. Python remains the
+  single source of truth — no tool logic duplicated in TypeScript. Child process is killed on
+  `session_shutdown`; pending calls reject with captured stderr if it dies.
+- `src/harness/mcp_server.py` gained `--workspace-dir`, so tool operations are confined to
+  `workspace/` regardless of the launching cwd.
+
+### 3. Agent rules collapsed to one file
+- `src/harness/openfoam_agent_rules.md` (workflow prose) and the new pi skill had already
+  begun to drift. Canonical file is now `src/harness/rules/openfoam.md`; the pi skill is a
+  **symlink** to it and MCP `prompts/get` serves the same text with frontmatter stripped.
+- `pi_sync_skill()` repairs the symlink as a copy where symlinks do not survive checkout
+  (Windows, zip, `rsync` without `-l`) — a broken link silently disables the skill because
+  pi drops skills with no frontmatter.
+
+### 4. v13-vs-v9 guardrail (correctness bug found and fixed)
+- **Our own rules file taught the pre-v12 convention** (`application foamRun;`), as did the
+  `SOLVER_MODULE_MISMATCH` diagnostic in `tools.py`. Verified against
+  `src/knowledge/v13_tutorials.json`: **0** `application` entries vs **177** `solver <module>;`;
+  `transportProperties`/`turbulenceProperties` **0** vs `physicalProperties` **727** /
+  `momentumTransport` **671**. Both fixed.
+- Measured that a skill alone is insufficient: skills load on demand, and without reading it
+  the model emitted `application foamRun;` and an invented `constant/physicsProperties`. The
+  non-negotiable correction now also rides in `promptGuidelines` (always in the system prompt).
+- Guidance kept **structural, not literal** — an earlier draft hardcoded
+  `solver incompressibleFluid;`, which a model copies verbatim into a VoF case. Verified a
+  dam-break prompt now yields `incompressibleVoF`.
+- Added `src/harness/rules/references/v13-vs-older.md` (on-demand detail, including a
+  "things that did NOT change" section — dimension brackets on `nu` are still valid in v13).
+
+### 5. Test Suite Status
+- **216 pytest tests** (+14: workspace flag, single-source rules, anti-v9 guard, reference
+  reachability), **7 node adapter tests**, **13 bash installer tests**. Ruff clean.
+- New guards fail if a second rules file appears, if the skill copy drifts, or if pre-v13
+  conventions reappear in any guidance string.
+
 ## 2026-08-14 — Solver Performance Bounds, Docker Daemon Cleanup & BC Registry Expansion
 
 **Focus:** Large-mesh linear solver iteration bounding (`maxIter`), explicit Docker container lifetime cleanup, `totalTemperature` support, and `system/fvConstraints` validation.

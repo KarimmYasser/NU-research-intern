@@ -457,8 +457,8 @@ def extract_file_patches(prompt: str, config: LLMConfig | None = None,
             overrides = data.get("file_overrides", {})
             if isinstance(overrides, dict) and overrides:
                 return {k: v for k, v in overrides.items() if isinstance(k, str) and isinstance(v, str)}
-        except Exception:  # noqa: BLE001
-            pass
+        except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            continue
     return {}
 
 

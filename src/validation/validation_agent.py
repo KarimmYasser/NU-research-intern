@@ -155,6 +155,10 @@ class ValidationAgent:
                         continue
         return sorted(times, key=lambda x: float(x) if x.replace(".", "", 1).isdigit() else 0.0)
 
+    def run_command(self, case_dir: Path, args: list[str]) -> subprocess.CompletedProcess:
+        """Run an OpenFOAM command in the configured validation container."""
+        return self._docker_run(case_dir, args)
+
     def run_solver(self, case_dir: Path) -> ValidationResult:
         if self.nprocs > 1:
             return self._run_solver_parallel(case_dir)
@@ -256,8 +260,8 @@ class ValidationAgent:
                     pass
             try:
                 subprocess.run(["docker", "rm", "-f", cname],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
-            except Exception:
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
+            except (OSError, ValueError, subprocess.SubprocessError):
                 pass
 
         proc = None
@@ -277,7 +281,7 @@ class ValidationAgent:
                     try:
                         for line in iter(proc.stdout.readline, ""):
                             q.put(line)
-                    except Exception:
+                    except OSError:
                         pass
                     finally:
                         q.put(None)
@@ -310,11 +314,11 @@ class ValidationAgent:
                 communicate_timeout = max(0.1, self.timeout - (time.monotonic() - start)) if reason is None else 1.0
                 tail = proc.communicate(timeout=communicate_timeout)[0] or ""
                 exit_code = proc.returncode
-            except (subprocess.TimeoutExpired, Exception):
+            except (OSError, subprocess.SubprocessError):
                 _cleanup_container(proc)
                 try:
                     tail, _ = proc.communicate(timeout=1.0)
-                except Exception:
+                except (OSError, subprocess.SubprocessError):
                     tail = ""
                 exit_code = None
                 if reason is None:

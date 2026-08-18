@@ -6,6 +6,19 @@ temp/
 .env
 .claude/settings.local.json
 
+# Generated simulation cases (the assistant's working directory).
+# The folder itself is kept via workspace/.gitkeep.
+workspace/*
+!workspace/.gitkeep
+
+# Setup/launch/diagnostic logs written by setup.sh, start.sh, check.sh
+.harness/
+
+# Pi package installs and settings backups (the adapter entry itself is committed)
+.pi/npm/
+.pi/git/
+.pi/settings.json.bak.*
+
 # OS generated files
 .DS_Store
 .DS_Store?
@@ -30,8 +43,6 @@ env/
 htmlcov/
 build/
 dist/
-Lib/*
-Scripts/*
 
 # Logs & temporary files
 *.log

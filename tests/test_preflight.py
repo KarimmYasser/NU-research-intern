@@ -477,3 +477,106 @@ if __name__ == "__main__":
             print(f"ok  {name}")
             n += 1
     print(f"\n{n} tests passed")
+
+
+def test_regex_patch_entries_cover_mesh_patches(tmp_path):
+    """OpenFOAM allows quoted regex boundaryField entries ("inlet_.*").
+
+    The audit used a plain set difference, so a field using a regex was reported
+    as missing every patch it actually covered -- 6 false FAILs on the RHVT case.
+    """
+    from preflight.audit import audit_case
+
+    case = tmp_path / "case"
+    (case / "0").mkdir(parents=True)
+    (case / "constant" / "polyMesh").mkdir(parents=True)
+    (case / "system").mkdir()
+    (case / "constant" / "polyMesh" / "boundary").write_text(
+        "3\n(\n"
+        "    inlet_1 { type patch; nFaces 10; startFace 0; }\n"
+        "    inlet_2 { type patch; nFaces 10; startFace 10; }\n"
+        "    walls   { type wall;  nFaces 10; startFace 20; }\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    # p covers the inlets by regex; U spells them out. Both are valid and equivalent.
+    (case / "0" / "p").write_text(
+        'boundaryField\n{\n    "inlet_.*" { type zeroGradient; }\n'
+        "    walls { type zeroGradient; }\n}\n",
+        encoding="utf-8",
+    )
+    (case / "0" / "U").write_text(
+        "boundaryField\n{\n"
+        "    inlet_1 { type fixedValue; value uniform (1 0 0); }\n"
+        "    inlet_2 { type fixedValue; value uniform (1 0 0); }\n"
+        "    walls { type noSlip; }\n}\n",
+        encoding="utf-8",
+    )
+
+    findings = audit_case(case)
+    assert not [f for f in findings if f.code == "patch_not_in_field"], (
+        "regex patch entry wrongly reported as missing coverage"
+    )
+    assert not [f for f in findings if f.code == "patch_set_mismatch"], (
+        "regex and explicit spellings of the same patch set flagged as inconsistent"
+    )
+
+
+def test_first_solve_nan_is_not_reported_as_a_dictionary_error(tmp_path):
+    """An immediate NaN can be killed before any `Time = ` marker is logged.
+
+    predict_from_residuals then sees 0 steps and blames a dictionary error,
+    sending the agent to hunt through valid files. Observed on the RHVT case.
+    """
+    from preflight.dry_run import bounded_run_predict
+
+    log = ("Starting time loop\n"
+           "GAMG:  Solving for p, Initial residual = 0.998531, "
+           "Final residual = nan, No Iterations 50\n"
+           "foamRun diverged to NaN - aborted on first non-finite residual\n")
+
+    class _Result:
+        ok = False
+
+    result = _Result()
+    result.log = log
+    pred = bounded_run_predict(tmp_path, lambda _p: result, dry_run_steps=5)
+
+    assert pred.prediction == "FAIL"
+    assert "diverged" in pred.message.lower()
+    assert "dictionary" not in pred.message.lower().split("not a dictionary")[0]
+    assert "p" in pred.message
+
+
+def _min_case(tmp_path, ddt: str, loop: str):
+    case = tmp_path / "c"
+    (case / "system").mkdir(parents=True)
+    (case / "0").mkdir()
+    (case / "system" / "fvSchemes").write_text(
+        f"ddtSchemes\n{{\n    default         {ddt};\n}}\n", encoding="utf-8")
+    (case / "system" / "fvSolution").write_text(
+        "solvers\n{\n    p { solver GAMG; tolerance 1e-6; }\n}\n"
+        f"{loop}\n{{\n    nCorrectors 2;\n}}\n"
+        "relaxationFactors\n{\n    fields { p 0.3; }\n}\n", encoding="utf-8")
+    return case
+
+
+def test_steady_ddt_with_pimple_block_is_not_a_failure(tmp_path):
+    """Verified on the RHVT case: steadyState ddt + PIMPLE ran 10 steps with all
+    residuals decaying on the v13 `fluid` module. The audit used to FAIL this,
+    condemning the only working configuration."""
+    from preflight.audit import audit_case
+
+    findings = audit_case(_min_case(tmp_path, "steadyState", "PIMPLE"))
+    assert not [f for f in findings if f.level == "fail" and "loop_block" in f.code], (
+        "steady + PIMPLE wrongly reported as a fatal mismatch"
+    )
+
+
+def test_transient_ddt_with_simple_only_still_fails(tmp_path):
+    """The evidenced direction must keep failing: a transient run whose fvSolution
+    only has SIMPLE dies at startup looking up PIMPLE."""
+    from preflight.audit import audit_case
+
+    findings = audit_case(_min_case(tmp_path, "Euler", "SIMPLE"))
+    assert [f for f in findings if f.code == "loop_block_mismatch" and f.level == "fail"]

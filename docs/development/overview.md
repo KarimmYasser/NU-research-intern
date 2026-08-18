@@ -4,6 +4,11 @@ This document explains the *whole pipeline* in one pass: the central bet, the
 stages a prompt moves through, and where each piece of code lives. Read this
 first; the other docs in this folder go into each stage in depth.
 
+> **Scope note.** Sections 1–3 describe the **LangGraph pipeline** — the path to the
+> deliverable, driven by a local LLM. There is a second way the same code is used:
+> the **tool harness** (§5), which hands the domain tooling to an external coding
+> agent. Same core, opposite control philosophy.
+
 ## 1. The core bet: "reason free, constrain late"
 
 The pipeline's central claim — and the reason a **weak, local** LLM works — is:
@@ -151,3 +156,82 @@ failing file(s) and returns corrected whole-file content as `file_overrides`
 For the design *rationale* (why this architecture, the "Constraint Tax"
 finding, meshing verdict), see
 [`../architecture/phase-ii-architecture.md`](../architecture/phase-ii-architecture.md).
+
+---
+
+## 5. The second entry point: the tool harness
+
+**Neither of these is a user interface.** This project ships no GUI and no web app.
+What it has is:
+
+- **a command-line script** — `python -m src run "..."`, which runs the graph below;
+- **a tool server** — `src/harness/`, which plugs the same code into *somebody else's*
+  chat interface (pi's). The chat window belongs to pi; we supply 19 tools and a skill.
+
+So "two entry points", not two products. What actually differs between them is **who
+decides the order of operations**.
+
+Everything above assumes **we** decide: the graph picks what runs next, and the LLM is
+confined to filling a typed `CaseIntent` at two nodes. That is the right design for a
+weak local model, and it is what the deliverable needs.
+
+`src/harness/` inverts that — the coding agent's model chooses what to call:
+
+```
+            shared domain core: ir/ rendering/ knowledge/ validation/ preflight/
+                        │                                   │
+     orchestration/graph.py                          harness/mcp_server.py
+     reached via: CLI script                         reached via: pi's chat window
+     control flow in CODE                            control flow in the MODEL
+     weak local LLM, 2 decisions                     strong hosted model, every decision
+     reliability is STRUCTURAL                       reliability is the MODEL's
+     → production runs (the deliverable)             → developing and testing this tool
+```
+
+| | Pipeline (§1–3) | Harness (§5) |
+| :--- | :--- | :--- |
+| Stage order | fixed by `add_edge` | model's choice |
+| Failure routing | by class, in code | model may skip `diagnose_case_failure` |
+| LLM writes dictionaries? | never — renderer only | can, via `write_case_file` |
+| Model requirement | weak/local is fine | needs a strong model |
+| Isolated-VM compatible | yes | no (hosted model) |
+| Primary user | CFD engineer running cases | us, building the tool |
+| How you reach it | `python -m src run "..."` | `./start.sh`, then chat |
+
+### The division of labour
+
+The two are matched to two different models, and the pairing is not
+interchangeable:
+
+- **Hosted model + harness — for development.** A strong commercial model is reliable
+  enough to be trusted with open-ended tool use, so the harness is the productive way to
+  build, probe and debug the domain core interactively.
+- **Local model + pipeline — for iteration and production.** A small local model *will*
+  hallucinate dictionary syntax, solver names and boundary conditions if allowed to write
+  them. The pipeline's rigidity is the countermeasure: the model fills a typed
+  `CaseIntent` and nothing else, the renderer emits the files, and envelopes clamp the
+  numbers. Constraints substitute for model capability.
+
+So the harness's freedom is safe **because** of the model behind it, and the pipeline's
+constraints exist **because** its model is weak. Copying the harness's looseness into the
+pipeline would remove the only thing making a local model viable.
+
+**Why keep both.** Work done through the harness feeds the pipeline: it exercises the
+shared core hard and surfaces failures cheaply. The v13-vs-v9 guidance bug
+([`agent-harness-and-pi.md`](agent-harness-and-pi.md) §6) was found this way, and it lived
+in code both surfaces share.
+
+**Model backend.** The LLM provider is abstracted behind one OpenAI-compatible client, so
+a self-hosted model (Ollama / llama.cpp) and a hosted API are interchangeable
+configuration. ConceptNote-1 originally specified a local model on an isolated VM; the
+supervisor has since treated the backend as plug-and-play, and all runs to date have used
+an API. The pipeline's constraints are therefore justified by *robustness to a weak or
+unknown model*, not by the VM requirement alone — and they are what would make a small
+self-hosted model viable if that requirement returns.
+
+The asymmetry that remains is real: the pipeline stays correct with a weak model because
+the structure does the work, while the harness needs a capable one because the model
+chooses every step.
+
+
+Full detail: [`agent-harness-and-pi.md`](agent-harness-and-pi.md).

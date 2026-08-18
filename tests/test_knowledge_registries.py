@@ -1,4 +1,5 @@
 """Structural contracts for the local OpenFOAM v13 knowledge registries."""
+# ruff: noqa: I001
 
 from __future__ import annotations
 

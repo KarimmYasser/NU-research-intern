@@ -91,6 +91,31 @@ def parse_residuals(log_text: str) -> tuple[list[dict[str, float]], int]:
     return steps, len(time_offs)
 
 
+# `_SOLVE_RE` only captures up to the *initial* residual, but a first-solve blow-up
+# usually shows up as `Final residual = nan` further along the same line — so scan
+# whole solver lines here rather than reusing that match.
+def _nonfinite_solver_lines(log_text: str):
+    for line in log_text.splitlines():
+        if "Solving for" not in line:
+            continue
+        low = line.lower()
+        if "nan" in low or "inf" in low:
+            yield line
+
+
+def _log_has_nonfinite_residual(log_text: str) -> bool:
+    """True if any solver line reports a nan/inf residual, even before step 1."""
+    return next(_nonfinite_solver_lines(log_text), None) is not None
+
+
+def _first_nonfinite_field(log_text: str) -> str | None:
+    for line in _nonfinite_solver_lines(log_text):
+        m = re.search(r"Solving for\s+([A-Za-z_][\w.()]*)", line)
+        if m:
+            return m.group(1)
+    return None
+
+
 def predict_from_residuals(steps: list[dict[str, float]], n_steps: int) -> DryRunPrediction:
     """Turn parsed per-step residuals into a PASS/WARN/FAIL prediction."""
     if n_steps == 0:
@@ -206,6 +231,20 @@ def bounded_run_predict(case_dir: Path, validation, dry_run_steps: int = 5) -> D
     result = validation(case_dir)
     steps, n = parse_residuals(result.log)
     pred = predict_from_residuals(steps, n)
+    # A solver that blows up inside the very first solve can be killed by the
+    # NaN-abort before any `Time = ` marker is flushed. predict_from_residuals
+    # only sees n_steps == 0 and blames a dictionary error, which sends the agent
+    # hunting through perfectly valid files. If the log actually shows a
+    # non-finite residual, say so instead.
+    if n == 0 and _log_has_nonfinite_residual(result.log):
+        field = _first_nonfinite_field(result.log)
+        return DryRunPrediction(
+            "FAIL", 0,
+            message=(f"solver diverged to NaN during the first solve"
+                     f"{f' (field {field})' if field else ''} — numerical setup, "
+                     "not a dictionary error: check initial fields, relaxation and "
+                     "boundary conditions"),
+        )
     # If the run was aborted early due to a non-finite residual but the parser
     # captured < dry_run_steps, surface why into the message.
     if pred.prediction == "PASS" and n < dry_run_steps:

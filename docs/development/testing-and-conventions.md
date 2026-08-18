@@ -14,7 +14,16 @@ pytest -q
 /path/to/python -m pytest -q
 ```
 
-The suite is **141 tests, fully offline, ~1s** — no Docker or LLM at test time;
+There are also two **non-pytest** suites for the harness (see
+[`agent-harness-and-pi.md`](agent-harness-and-pi.md) §9), both offline:
+
+```bash
+node tests/pi_adapter/adapter_test.mjs   # pi adapter <-> real Python harness
+bash tests/shell/installer_test.sh       # ./setup.sh / ./start.sh behaviour
+./scripts/test_harness.sh                # all of the above + tool smoke tests
+```
+
+The suite is **237 tests, fully offline, ~3s** — no Docker or LLM at test time;
 LLM and docker interactions are mocked at the client/ladder boundary. Run it on
 any renderer change even if it "feels" obvious — the renderer is where silent
 typo regressions hide.
@@ -28,6 +37,9 @@ There is no wired-up lint/typecheck gate in CI, but `pyproject.toml` ships
 |---|---|
 | `test_intent.py` | `_assign_faces` tiling, `_turbulence_values`, field sets, `intent_to_spec` expansion, time control |
 | `test_pipeline.py` | `extract_intent` stages, `_extract_json` / `_extract_fenced_json` repair, patch extraction |
+| `test_harness.py` | MCP schemas, workspace confinement + `--workspace-dir`, single-source agent rules, guard against pre-v13 conventions in guidance |
+| `tests/pi_adapter/adapter_test.mjs` | (node) adapter registers 19 tools, injects v13 prompt guidelines, round-trips a tool call, kills the child process on shutdown |
+| `tests/shell/installer_test.sh` | (bash) pi-first default, idempotency, settings preservation/backup, error messages, skill-symlink repair |
 | `test_intent_validator.py` | BC registry checks, relaxation factors, dict-syntax brace check, energy-solver enforcement, box-geometry faces |
 | `test_envelopes.py` | in-range pass-through, clamps, direction-preserving velocity rescale, zero-velocity no-op, reject-band unit errors, species-derived nu (accept/reject/unknown fallback/T-dependence) |
 | `test_rag_skills.py` | keyword-overlap RAG, species thermo lookup, the two skills |

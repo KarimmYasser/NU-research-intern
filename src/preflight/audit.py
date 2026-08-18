@@ -199,7 +199,19 @@ def _check_fvsolution(fv: str, compressible: bool, ddt_default: str | None,
             # PISO is the transient incompressible alternative — accepted.
             findings.append(AuditFinding("loop_block", "pass",
                                          f"fvSolution.{loop} present (transient PISO)"))
+        elif expected == "SIMPLE" and loop == "PIMPLE":
+            # Verified counter-example (2026-08-18): the RHVT case with
+            # ddtSchemes.default=steadyState and a PIMPLE block ran 10 steps on the
+            # v13 `fluid` module with every field's residual decaying. This rule used
+            # to FAIL here, which condemned the one configuration that worked — the
+            # worst kind of false positive. Steady + PIMPLE is legal; only flag it.
+            findings.append(AuditFinding("loop_block_steady_pimple", "warn",
+                                         "fvSolution uses PIMPLE with steadyState ddt — accepted by the "
+                                         "v13 fluid module (verified), but SIMPLE is the more usual "
+                                         "pairing for a steady run"))
         else:
+            # Evidenced direction: a transient ddt with a SIMPLE-only fvSolution dies
+            # at startup because the module looks up PIMPLE (seen live on a cavity).
             findings.append(AuditFinding("loop_block_mismatch", "fail",
                                          f"fvSolution uses {loop} but ddtSchemes.default='{ddt_default}' "
                                          f"needs {expected} — the v13 solver module reads {expected} "
@@ -364,7 +376,7 @@ def _check_patch_coverage(zero: Path, boundary: Path,
     # Mesh-side patches must all be covered by every field.
     if mesh_patches:
         for fname, names in field_patch_sets.items():
-            missing = sorted(mesh_patches - names)
+            missing = _uncovered_patches(mesh_patches, names)
             if missing:
                 findings.append(AuditFinding("patch_not_in_field", "fail",
                                              f"0/{fname}: mesh patches missing from "
@@ -375,6 +387,24 @@ def _check_patch_coverage(zero: Path, boundary: Path,
 
     # Cross-field consistency: every field must agree on the patch set (a patch
     # declared on U but missing on p breaks at file-read, not at solve).
+    #
+    # When the mesh patch list is known, compare *effective coverage* of real mesh
+    # patches rather than the literal entry names: one field may spell out
+    # inlet_1..inlet_6 while another uses the regex "inlet_.*", and both are correct.
+    if mesh_patches:
+        coverage = {
+            fname: frozenset(p for p in mesh_patches if _patch_covered(p, names))
+            for fname, names in field_patch_sets.items()
+        }
+        _, base_cov = next(iter(coverage.items()))
+        for fname, cov in list(coverage.items())[1:]:
+            if cov != base_cov:
+                findings.append(AuditFinding("patch_set_mismatch", "warn",
+                                             f"0/{fname}: patch set differs from other fields "
+                                             f"(extra={sorted(cov - base_cov)}, "
+                                             f"missing_relative={sorted(base_cov - cov)})"))
+        return
+
     base = next(iter(field_patch_sets.values()))
     for fname, names in list(field_patch_sets.items())[1:]:
         if names != base:
@@ -383,6 +413,32 @@ def _check_patch_coverage(zero: Path, boundary: Path,
             findings.append(AuditFinding("patch_set_mismatch", "warn",
                                          f"0/{fname}: patch set differs from other fields "
                                          f"(extra={only_in}, missing_relative={missing_from})"))
+
+
+# OpenFOAM lets a boundaryField entry be a quoted regex ("inlet_.*") matching many
+# patches. ofdict strips the quotes, so detect them by metacharacter: legal literal
+# patch names are alphanumeric + underscore, so any of these means "regex".
+_PATCH_REGEX_META = re.compile(r"[.*?\[\]()|^$+\\]")
+
+
+def _entry_matches_patch(entry: str, patch: str) -> bool:
+    if entry == patch:
+        return True
+    if _PATCH_REGEX_META.search(entry):
+        try:
+            return re.fullmatch(entry, patch) is not None
+        except re.error:
+            return False
+    return False
+
+
+def _patch_covered(patch: str, entries_: set[str]) -> bool:
+    return any(_entry_matches_patch(e, patch) for e in entries_)
+
+
+def _uncovered_patches(mesh_patches: set[str], entries_: set[str]) -> list[str]:
+    """Mesh patches with no literal or regex boundaryField entry."""
+    return sorted(p for p in mesh_patches if not _patch_covered(p, entries_))
 
 
 def _mesh_patch_names(boundary_path: Path) -> list[str]:

@@ -47,7 +47,7 @@ def _load_json(filename: str) -> dict[str, Any]:
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return {}
 
 
@@ -194,13 +194,15 @@ class IntentValidator:
                     field=f"extra_files[{rel}]",
                     message="extra_files paths must stay inside the case directory.",
                 ))
-            if rel == "system/fvConstraints" and isinstance(content, str):
-                # An empty constraints { } block or sub-block without 'type' causes fatal IO error in OpenFOAM v13
-                if re.search(r"^\s*constraints\s*\{\s*\}", content, re.MULTILINE):
-                    errors.append(IntentValidationError(
-                        field="extra_files[system/fvConstraints]",
-                        message="Empty 'constraints { }' block in system/fvConstraints is invalid in OpenFOAM v13 (each constraint subdictionary requires 'type <name>;'). Remove the file if unused or provide valid constraints.",
-                    ))
+            if (
+                rel == "system/fvConstraints"
+                and isinstance(content, str)
+                and re.search(r"^\s*constraints\s*\{\s*\}", content, re.MULTILINE)
+            ):
+                errors.append(IntentValidationError(
+                    field="extra_files[system/fvConstraints]",
+                    message="Empty 'constraints { }' block in system/fvConstraints is invalid in OpenFOAM v13 (each constraint subdictionary requires 'type <name>;'). Remove the file if unused or provide valid constraints.",
+                ))
         return errors
 
     def _check_turbulence_model(self, intent: CaseIntent) -> list[IntentValidationError]:

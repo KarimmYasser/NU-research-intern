@@ -10,6 +10,13 @@ If you just want to *run* the agent (no coding), read
 For the CLI/API quickstart, see
 [`../guides/agent-usage-guide.md`](../guides/agent-usage-guide.md).
 
+> **Two entry points.** Most of this folder describes the `src/` pipeline, run from
+> the command line and driven by a local LLM through LangGraph. There is a second
+> way in — the **tool harness**
+> (`src/harness/`), which exposes the same domain core to an external coding agent
+> such as pi. See [`agent-harness-and-pi.md`](agent-harness-and-pi.md); §2 explains
+> why the two have very different ideas about who owns the workflow.
+
 > **Status first.** `src/` is a deliberately scoped **architecture spike**, not
 > the production deliverable. It proves the Phase II design end-to-end. The
 > authoritative engineering plan is
@@ -33,7 +40,11 @@ For the CLI/API quickstart, see
 | Understand the preflight gate (audit / metrics / dry run)  | `validation-and-preflight.md` §3         |
 | Configure the LLM backend / env vars                      | `config-and-llm.md`                      |
 | Check what tests exist and how testing works              | `testing-and-conventions.md`             |
+| See what actually breaks (and what stops it)              | `failure-modes.md`                       |
 | Walk through a concrete extension end-to-end              | `extending.md`                           |
+| Work on the **tool harness / pi integration**             | `agent-harness-and-pi.md`                |
+| Understand why the harness has *no* enforced workflow     | `agent-harness-and-pi.md` §2             |
+| Change what the agent is told about **v13 vs v9**          | `agent-harness-and-pi.md` §6             |
 
 ## Module map (one line each)
 
@@ -59,7 +70,8 @@ src/
 ├── llm/
 │   └── llm_client.py       OpenAI-compatible client (Ollama/vLLM/gateway)
 ├── validation/
-│   └── validation_agent.py Docker ladder (serial or mpirun -parallel) + NaN abort
+│   ├── validation_agent.py Docker ladder (serial or mpirun -parallel) + NaN abort
+│   └── snapshot.py         archives the config + log of a run that passed
 ├── preflight/
 │   ├── audit.py            Level A: static dictionary audit (no Docker)
 │   ├── metrics.py          Level B: quantitative checkMesh metrics
@@ -67,10 +79,16 @@ src/
 │   ├── ofdict.py           tolerant OpenFOAM-dict parsing helpers
 │   ├── runner.py           run_preflight_with_agent() A->B->C orchestration
 │   └── __init__.py         PreflightResult / PreflightVerdict / run_preflight
-└── orchestration/
-    ├── pipeline.py         extract_intent / extract_file_patches (LLM entrypoints)
-    └── graph.py            LangGraph StateGraph (the CURRENT primary pipeline)
-tests/                      pytest suite (141 tests, offline, ~1s)
+├── orchestration/
+│   ├── pipeline.py         extract_intent / extract_file_patches (LLM entrypoints)
+│   └── graph.py            LangGraph StateGraph (the CURRENT primary pipeline)
+└── harness/                2nd entry point: tool server for a coding agent
+    ├── mcp_server.py       JSON-RPC 2.0 stdio server, 19 tool schemas
+    ├── tools.py            OpenFOAMToolbox (wraps the same domain core)
+    └── rules/openfoam.md   canonical agent rules (pi skill symlinks to this)
+tests/                      pytest suite (237 tests, offline, ~3s)
+  pi_adapter/               node: pi adapter <-> real Python harness
+  shell/                    bash: ./setup.sh / ./start.sh regression tests
 ```
 
 The `knowledge/*.json` files are **data, not code** — the RAG engine, intent

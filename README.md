@@ -25,3 +25,52 @@ See `CLAUDE.md` for full project context (objectives, phases, KPIs) intended to 
 - `temp/` — scratch space (downloaded reference repos, literature-review PDFs, exploratory output). Gitignored — not part of version control. See `CLAUDE.md` for the convention.
 
 The `src/` pipeline runs end-to-end today (NL → validated v13 case via a local LLM + Docker OpenFOAM). The remaining work is model-in-the-loop hardening and the eventual VM deploy — see `docs/README.md` and the progress log.
+
+## OpenFOAM AI Assistant
+
+You do not need to install OpenFOAM or edit configuration files.
+
+### First time only
+
+```bash
+./setup.sh
+```
+
+### Start the assistant
+
+```bash
+./start.sh
+```
+
+Then describe your simulation in normal language. Example:
+
+> Create a 2D lid-driven cavity simulation using water. Use a 0.1 m square
+> domain and a top-wall speed of 1 m/s. Check the case and tell me whether
+> it is ready to run.
+
+Your simulation files will be saved in `workspace/`.
+
+If something looks wrong, run `./check.sh` for a plain-language health report.
+
+See the [Quickstart Guide](docs/guides/agent_harness_quickstart.md) for more example
+requests and troubleshooting.
+
+<details>
+<summary>Advanced: other assistants and internals</summary>
+
+Pi is the supported default. The same entry points accept an explicit target:
+
+```bash
+./setup.sh --agent pi        # default
+./setup.sh --agent cline     # experimental
+./setup.sh --agent claude    # experimental
+./start.sh  --agent pi
+```
+
+The Pi integration lives in `integrations/pi/` (a project-local pi package: a
+TypeScript extension that bridges to the Python harness over JSON-RPC, plus the
+OpenFOAM behaviour skill). `./setup.sh` installs it with `pi install ./integrations/pi -l`,
+which only writes `.pi/settings.json` and never touches global pi configuration.
+Diagnostics: `./scripts/test_harness.sh`; logs in `.harness/logs/`.
+
+</details>

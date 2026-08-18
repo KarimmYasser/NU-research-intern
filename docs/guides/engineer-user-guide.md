@@ -47,6 +47,32 @@ So your job is only: **describe the problem, run one command, read the answer.**
 This section is done once by whoever first sets up the machine. If a colleague
 hands you a machine that is already set up, jump straight to **Section 3**.
 
+> ### Two ways to run this tool — and why this guide is the one for you
+>
+> Neither is an app with buttons. One is a **command you type**; the other is a
+> **chat window that belongs to a separate AI program** we plug our tools into.
+>
+> **This guide: the automatic pipeline.** One command turns your written
+> description into a finished case. This is the version meant for doing actual
+> work: it runs on a model hosted on your own lab machine, with no internet and no
+> account, and the software keeps that model on a tight leash — it is only allowed
+> to fill in a short list of physics choices, and the OpenFOAM files themselves are
+> written by ordinary, tested code. A local model left to write CFD files freely
+> would invent plausible-looking nonsense; this design removes that opportunity
+> rather than hoping the model behaves.
+>
+> **The other one: chatting with an AI assistant** (`./setup.sh`, `./start.sh`,
+> then describe your problem in a chat window —
+> [`agent_harness_quickstart.md`](agent_harness_quickstart.md)). This route hands
+> the decisions to a large commercial AI model, which is more capable but needs an
+> account and an internet connection. It is mainly how the *developers* of this
+> tool build and test it, and it is useful for exploring an unfamiliar setup
+> interactively. Because that model chooses every step for itself, check its work.
+>
+> Same engineering code underneath, and both produce a real OpenFOAM case. The
+> difference is where the trustworthiness comes from: **here it is enforced by the
+> software; there it depends on the AI model.**
+
 You need four things installed:
 
 | # | What | Why | How to know you have it |

@@ -49,7 +49,7 @@ def _load_json(filename: str, base_dir: Path = _KNOWLEDGE_DIR) -> dict[str, Any]
         return {}
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return {}
 
 

@@ -184,6 +184,37 @@ When a case is fundamentally unresolvable due to external prerequisites, the age
   - **Code 1**: Standard unhandled or internal failure (budget exhausted).
   - **Code 2**: Positively validated Safe Exit (prerequisites unmet).
 
+## 3b. Run snapshots (`validation/snapshot.py`)
+
+Both entry points re-render a case **in place**: the pipeline rewrites it on the next
+self-correction attempt, and an interactive session overwrites it on the next edit. So a
+configuration that ran leaves no trace of itself. That is not hypothetical — it is how
+the RHVT reference result was nearly lost (`../evidence/rhvt-residuals-2026-08-18.md`).
+
+`snapshot_run(case_dir, log, stage=, nprocs=, extra=)` copies, on **success only**:
+
+- `system/`, `0/` and `constant/` — excluding `polyMesh`, `triSurface` and feature-edge
+  data, and any single file over 5 MB
+- the solver log, head + tail (200 / 2000 lines) if long
+- a `manifest.json` recording stage, ranks, attempt, file list, skipped files
+
+into `<case>/.runs/<microsecond-stamp>-<stage>/`. Measured: **64 kB from a 374 MB RHVT
+case**, 176 kB for a 1000-step cavity.
+
+Called from `harness.tools.validate_case_docker` (returns `snapshot_dir`) and from the
+graph's `validate_case` node (prints the path). Design rules, all under test:
+
+- **Never fails a passing run.** `OSError` is reported, not raised; an unreadable file is
+  recorded as skipped.
+- **`clean_case_directory` does not touch `.runs/`.**
+- **Bounded.** `prune_snapshots` keeps the 10 most recent.
+- **Chronological names.** Stamps carry microseconds so names sort by age. A collision
+  *suffix* was tried first and is wrong: pruning frees earlier names, and the next
+  snapshot reuses one and sorts itself to the front.
+
+This is deliberately code, not agent guidance. Sequence lives in prose; anything that
+must not be forgotten lives in Python.
+
 ## 4. Upstream OpenFOAM Foundation v13 Tooling Helpers
 
 The `ValidationAgent` integrates upstream OpenFOAM v13 tools for executable evidence:

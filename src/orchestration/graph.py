@@ -53,6 +53,7 @@ from preflight import PreflightResult, PreflightVerdict
 from preflight.runner import run_preflight_with_agent
 from rendering.case import CaseFiles, apply_file_overrides
 from rendering.renderer import render
+from validation.snapshot import snapshot_run
 from validation.validation_agent import (
     FailureClass,
     ValidationAgent,
@@ -109,6 +110,11 @@ def _make_validation_agent(state: CaseGraphState) -> ValidationAgent:
     if (check_mesh_all := state.get("check_mesh_all")) is not None:
         kwargs["check_mesh_all"] = check_mesh_all
     return ValidationAgent(**kwargs)
+
+
+def _validation_nprocs(state: CaseGraphState) -> int:
+    procs = state.get("procs")
+    return int(procs) if procs else 1
 
 
 def _collect_file_context(state: CaseGraphState) -> str:
@@ -381,6 +387,20 @@ def validate_case(state: CaseGraphState) -> dict:
         ))
     else:
         print(f"      -> Validation PASSED at stage [{result.stage}]!", flush=True)
+        # Archive the configuration that worked. The loop re-renders the case in place
+        # on the next attempt, so without this a passing run leaves no trace of the
+        # settings that produced it (docs/evidence/rhvt-residuals-2026-08-18.md).
+        try:
+            dest = snapshot_run(
+                Path(case_dir_str), result.log,
+                stage=result.stage or "all",
+                nprocs=_validation_nprocs(state),
+                extra={"attempt": state.get("attempt", 1)},
+            )
+            print(f"      -> configuration archived to .runs/{dest.name}", flush=True)
+        except OSError as exc:
+            # Bookkeeping must never turn a passing run into a failure.
+            print(f"      -> WARNING: could not archive configuration: {exc}", flush=True)
         history.append(RemediationAttempt(
             attempt=state.get("attempt", 1),
             issue_class="NONE",
