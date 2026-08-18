@@ -28,7 +28,7 @@ for self-correction. That works end-to-end today, two ways:
 | **Tool harness** (`src/harness/`) | `./setup.sh`, `./start.sh` → chat | works end-to-end; 19 tools + skill |
 
 Both sit on one domain core (`ir/`, `rendering/`, `knowledge/`, `preflight/`,
-`validation/`), so a fix lands in both. Evidence: **246 Python tests + 8 adapter +
+`validation/`), so a fix lands in both. Evidence: **267 Python tests + 8 adapter +
 13 installer tests**, all offline; real cases built and run in Docker.
 
 Deliverable-side status against the ConceptNote KPIs:

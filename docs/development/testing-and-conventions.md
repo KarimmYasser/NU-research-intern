@@ -23,7 +23,7 @@ bash tests/shell/installer_test.sh       # ./setup.sh / ./start.sh behaviour
 ./scripts/test_harness.sh                # all of the above + tool smoke tests
 ```
 
-The suite is **246 tests, fully offline, ~3s** — no Docker or LLM at test time;
+The suite is **267 tests, fully offline, ~3s** — no Docker or LLM at test time;
 LLM and docker interactions are mocked at the client/ladder boundary. Run it on
 any renderer change even if it "feels" obvious — the renderer is where silent
 typo regressions hide.
@@ -103,3 +103,36 @@ only part tests deliberately mock.
   reference (the practical run documentation).
 - [`docs/architecture/phase-ii-architecture.md`](../architecture/phase-ii-architecture.md)
   — the design rationale.
+
+## Coverage as a first-class signal
+
+Level C (`run_bounded_dry_run`) shipped completely broken for weeks: it passed the
+`ValidationAgent` object where a callable was expected, so every call raised. No test
+caught it because **no test called it at all**. Coverage is therefore treated as a
+defect-prediction signal here, not a vanity metric.
+
+```bash
+./scripts/coverage_report.sh        # report
+./scripts/coverage_report.sh 75     # fail under a floor
+```
+
+Current: **79%** overall. The audit that followed the incident found the risk was
+concentrated exactly where Docker or an LLM is normally required — the code paths that
+are awkward to test are the ones that break:
+
+| Module | Was | Now | Why it mattered |
+|---|---|---|---|
+| `preflight/runner.py` | 14% | 74% | `_bounded_foamrun` **rewrites the user's controlDict** and must restore it byte-for-byte even when the solver crashes or times out |
+| `validation/validation_agent.py` | 67% | 80% | checkMesh reports failure in its *text* while exiting 0; the pass cache must not hand a stale PASS to an edited mesh |
+| `harness/tools.py` | 62% | 62%¹ | 7 of 15 tools had no test mention at all |
+
+¹ smoke sentinels added for the 7 uncovered tools; the percentage barely moves because
+they are shallow by design — they assert the contract, not the behaviour.
+
+Still thin and known: `orchestration/pipeline.py` (54%, CLI wiring),
+`harness/mcp_server.py` (61%, JSON-RPC transport), `knowledge/rebuild_tutorials.py` (0%,
+an offline data-generation script).
+
+The lesson worth carrying into the rebuild: **test the awkward paths first**. Stub the
+container call rather than skipping the test — every gap listed above was closable
+without Docker.

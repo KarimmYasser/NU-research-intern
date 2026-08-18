@@ -111,6 +111,20 @@ the 15 harness tools had no test mention at all** (`diagnose_case_failure`,
 were mentioned only once or twice. Level C did not fail because it was hard — it failed
 because nothing ever called it. Smoke sentinels now cover them.
 
+Widening the audit from name-grep to real coverage found the same pattern **outside** the
+harness, and worse: `preflight/runner.py` was at **14%**. That file holds
+`_bounded_foamrun`, which rewrites the user's `controlDict` to bound a dry run and
+restores it in a `finally`. Nothing verified the restore — a timeout or Docker crash
+leaving a case truncated to five steps would quietly ruin the next real run.
+`validation_agent.py` (67%) hid two more subtleties: checkMesh signals failure in its
+*text* while exiting 0, and the pass cache must invalidate when the mesh content changes
+or an edited mesh inherits the previous verdict. Both now tested; coverage 74% and 80%.
+
+The generalisable finding: **the code that is awkward to test is the code that breaks**,
+because "needs Docker" became "needs no test". Every gap above was closable by stubbing
+the container call. `./scripts/coverage_report.sh` makes this measurable, with an
+optional floor.
+
 Writing those sentinels surfaced a smaller design smell: **tool return shapes are
 inconsistent**. Some return `success`, others return domain keys only
 (`inspect_mesh` → `has_polyMesh`, `get_tutorial_numerics` → `has_schemes`,

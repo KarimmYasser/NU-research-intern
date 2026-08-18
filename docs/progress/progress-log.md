@@ -78,7 +78,7 @@ read, but returns a warning that v13 will not run the case. The same tool now al
 `archived_runs`, so the settings that worked are findable.
 
 ### 6. Test suite
-**246 pytest tests** (+30) and **8 adapter tests**, ruff clean. New coverage: regex patch
+**267 pytest tests** (+51) and **8 adapter tests**, ruff clean. New coverage: regex patch
 coverage, first-solve-NaN diagnosis, steady+PIMPLE accepted, transient+SIMPLE still
 rejected, v13 solver-entry detection, thirteen snapshot tests, and a regression test for `run_bounded_dry_run` itself — verified by reintroducing the original bug and watching it fail (mesh exclusion, accumulation, pruning, log trimming,
 clean-safety, graph archiving, archive-failure tolerance).
