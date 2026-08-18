@@ -309,3 +309,84 @@ def test_run_bounded_dry_run_reports_a_missing_case(tmp_path):
 
     assert out["success"] is False
     assert "not found" in out["error"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Thin smoke coverage for the tools that had none. Level C shipped broken for
+# weeks precisely because nothing called it; these are cheap sentinels that a
+# tool still returns its documented shape, not deep behavioural tests.
+# ---------------------------------------------------------------------------
+
+
+def _toolbox(tmp_path):
+    from harness.tools import OpenFOAMToolbox
+
+    return OpenFOAMToolbox(workspace_dir=tmp_path)
+
+
+def test_diagnose_case_failure_classifies_a_real_log(tmp_path):
+    log = ('--> FOAM FATAL IO ERROR:\nkeyword nu is undefined in dictionary '
+           '"/case/constant/physicalProperties"\nfile: /case/constant/physicalProperties at line 20.')
+    out = _toolbox(tmp_path).diagnose_case_failure(log)
+
+    assert out["failure_class"], "no failure class returned"
+    assert out["root_cause"] and out["recommended_fix"]
+    assert "physicalProperties" in str(out.get("target_file") or out["root_cause"])
+
+
+def test_inspect_mesh_reports_a_missing_mesh(tmp_path):
+    case = tmp_path / "c"
+    (case / "system").mkdir(parents=True)
+
+    out = _toolbox(tmp_path).inspect_mesh(str(case))
+
+    assert out["has_polyMesh"] is False
+    assert out["has_blockMeshDict"] is False
+
+
+def test_inspect_mesh_reads_patch_names(tmp_path):
+    case = tmp_path / "c"
+    poly = case / "constant" / "polyMesh"
+    poly.mkdir(parents=True)
+    (poly / "boundary").write_text(
+        "2\n(\n    inlet { type patch; nFaces 10; startFace 0; }\n"
+        "    walls { type wall; nFaces 20; startFace 10; }\n)\n", encoding="utf-8")
+
+    out = _toolbox(tmp_path).inspect_mesh(str(case))
+
+    assert out["has_polyMesh"] is True
+    names = {p.get("name") if isinstance(p, dict) else str(p) for p in out["patches"]}
+    assert {"inlet", "walls"} <= names
+
+
+def test_get_tutorial_numerics_returns_schemes_for_a_real_solver(tmp_path):
+    out = _toolbox(tmp_path).get_tutorial_numerics("incompressibleFluid")
+
+    assert out["has_schemes"] is True
+    assert "ddtSchemes" in str(out["snippets"])
+
+
+def test_search_openfoam_knowledge_resolves_a_solver_family(tmp_path):
+    out = _toolbox(tmp_path).search_openfoam_knowledge("lid driven cavity laminar flow")
+
+    assert out["recommended_solver"], "no solver family resolved"
+    assert out["reference_cases"] or out["matched_families"]
+
+
+def test_import_external_mesh_rejects_a_missing_source(tmp_path):
+    case = tmp_path / "c"
+    case.mkdir()
+
+    out = _toolbox(tmp_path).import_external_mesh(str(case), str(tmp_path / "nope"))
+
+    assert out["success"] is False
+
+
+def test_read_postprocessing_data_reports_absence(tmp_path):
+    case = tmp_path / "c"
+    case.mkdir()
+
+    out = _toolbox(tmp_path).read_postprocessing_data(str(case))
+
+    assert out["success"] is False
+    assert "postprocessing" in out["error"].lower()

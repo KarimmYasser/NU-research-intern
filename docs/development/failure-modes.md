@@ -104,6 +104,20 @@ defects — all fixed on 2026-08-18, all with regression tests:
 | 2.6e | **[observed]** `get_case_status` matched only a pre-v13 `application` entry in controlDict | **every correctly generated v13 case reported `solver: unknown`** — our own tool carried the v9 convention we warn the model about | read the v13 `solver` entry first; still read `application`, but return a warning that v13 will not run the case |
 | 2.6d | **[observed]** Level A failed `steadyState` ddt paired with a `PIMPLE` block | **condemned the one RHVT configuration that actually runs** — the working case was skipped because the gate said it was broken | verified the v13 `fluid` module accepts the pairing; downgraded to a warning. The opposite direction (transient ddt, SIMPLE-only) still fails, as evidenced |
 
+**Coverage was the root cause, not bad luck.** An audit after these fixes found **7 of
+the 15 harness tools had no test mention at all** (`diagnose_case_failure`,
+`get_mesh_quality_metrics`, `get_tutorial_numerics`, `import_external_mesh`,
+`inspect_mesh`, `read_postprocessing_data`, `search_openfoam_knowledge`) and four more
+were mentioned only once or twice. Level C did not fail because it was hard — it failed
+because nothing ever called it. Smoke sentinels now cover them.
+
+Writing those sentinels surfaced a smaller design smell: **tool return shapes are
+inconsistent**. Some return `success`, others return domain keys only
+(`inspect_mesh` → `has_polyMesh`, `get_tutorial_numerics` → `has_schemes`,
+`search_openfoam_knowledge` → `recommended_solver`). The model must guess which
+convention applies. Not fixed here — changing shapes would ripple through the skill and
+adapter — but it belongs on the list for the rebuild.
+
 2.6e is the quiet one: it never errored, it just reported "unknown" forever — the v9→v13
 drift the supervisor warned about, found inside our own tooling rather than in model
 output.
