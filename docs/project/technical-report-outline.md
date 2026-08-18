@@ -115,7 +115,7 @@ since the end user adjusts solver settings himself. Note that the preflight gate
 correctly reports WARN rather than PASS for exactly this reason — the system knows what
 it does not know.
 
-Supporting numbers (all verifiable): 237 + 8 + 13 automated tests, fully offline;
+Supporting numbers (all verifiable): 239 + 8 + 13 automated tests, fully offline;
 parallel validation cutting a run from ~20 min to ~1.8 min; ~15× speed-up from bounding
 solver iterations; NaN abort within the first solve instead of a full failed run.
 

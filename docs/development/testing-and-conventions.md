@@ -23,7 +23,7 @@ bash tests/shell/installer_test.sh       # ./setup.sh / ./start.sh behaviour
 ./scripts/test_harness.sh                # all of the above + tool smoke tests
 ```
 
-The suite is **237 tests, fully offline, ~3s** — no Docker or LLM at test time;
+The suite is **239 tests, fully offline, ~3s** — no Docker or LLM at test time;
 LLM and docker interactions are mocked at the client/ladder boundary. Run it on
 any renderer change even if it "feels" obvious — the renderer is where silent
 typo regressions hide.

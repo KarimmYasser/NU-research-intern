@@ -259,3 +259,53 @@ def test_agent_rules_cover_direct_case_editing_and_residual_triage():
     # at the artefact rather than ask the model to remember to copy files.
     assert ".runs/" in rules, "rules never mention where a passing run is archived"
     assert "archived for you" in rules
+
+
+def test_run_bounded_dry_run_invokes_the_solver_and_reports_trends(tmp_path, monkeypatch):
+    """Level C was entirely broken from the harness for weeks.
+
+    `bounded_run_predict` wants a callable(case_dir); the tool handed it the
+    ValidationAgent object, so every call raised
+    "'ValidationAgent' object is not callable" — and no test noticed, because
+    nothing exercised this tool at all.
+    """
+    from harness.tools import OpenFOAMToolbox
+    from preflight import runner
+
+    case = tmp_path / "c"
+    (case / "system").mkdir(parents=True)
+
+    seen = {}
+
+    class _Result:
+        ok = True
+        log = "\n".join(
+            f"Time = {i}\nsmoothSolver:  Solving for Ux, Initial residual = {1.0 / (2**i)}, "
+            f"Final residual = 1e-08, No Iterations 3"
+            for i in range(1, 5)
+        )
+
+    def fake_bounded(case_path, agent, steps):
+        seen["case"] = Path(case_path)
+        seen["steps"] = steps
+        seen["agent_is_callable_object"] = callable(agent)
+        return _Result()
+
+    monkeypatch.setattr(runner, "_bounded_foamrun", fake_bounded)
+
+    out = OpenFOAMToolbox(workspace_dir=tmp_path).run_bounded_dry_run(str(case), dry_run_steps=4)
+
+    assert seen["case"] == case.resolve(), "the solver was never invoked on the case"
+    assert seen["steps"] == 4, "dry_run_steps was not forwarded"
+    assert out["steps_captured"] == 4
+    assert out["prediction"] in {"PASS", "WARN"}
+    assert any("Ux" in line for line in out["per_field_trends"])
+
+
+def test_run_bounded_dry_run_reports_a_missing_case(tmp_path):
+    from harness.tools import OpenFOAMToolbox
+
+    out = OpenFOAMToolbox(workspace_dir=tmp_path).run_bounded_dry_run(str(tmp_path / "nope"))
+
+    assert out["success"] is False
+    assert "not found" in out["error"].lower()

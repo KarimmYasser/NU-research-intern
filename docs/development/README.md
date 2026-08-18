@@ -86,7 +86,7 @@ src/
     ├── mcp_server.py       JSON-RPC 2.0 stdio server, 19 tool schemas
     ├── tools.py            OpenFOAMToolbox (wraps the same domain core)
     └── rules/openfoam.md   canonical agent rules (pi skill symlinks to this)
-tests/                      pytest suite (237 tests, offline, ~3s)
+tests/                      pytest suite (239 tests, offline, ~3s)
   pi_adapter/               node: pi adapter <-> real Python harness
   shell/                    bash: ./setup.sh / ./start.sh regression tests
 ```
