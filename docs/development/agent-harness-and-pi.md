@@ -243,8 +243,9 @@ Full output goes to `.harness/logs/`; the console stays plain-language unless `-
 | Installer/launcher | `bash tests/shell/installer_test.sh` | pi default, idempotency, settings preservation + backup, missing-pi message, docker warning, spaces in paths, out-of-repo invocation, skill repair |
 | Everything | `./scripts/test_harness.sh` | the above plus tool smoke tests |
 
-The adapter test runs the extension under plain `node` using type stripping. That is why
-the extension must avoid TypeScript syntax that strip-only mode rejects — **no parameter
+Setup verifies that the extension can be loaded before registering it with Pi. It prefers
+Node's native type stripping and falls back to the `tsx` executable. That is why the
+extension must avoid TypeScript syntax that strip-only mode rejects — **no parameter
 properties, no enums, no namespaces**. Runtime imports are node built-ins only; pi types
 are `import type` so they erase.
 

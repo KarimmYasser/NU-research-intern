@@ -76,6 +76,8 @@ case "$AGENT_TARGET" in
             "Update Pi and run ./setup.sh again:
     npm install -g @earendil-works/pi-coding-agent@latest"
         log "pi version: $(pi_version)"
+        pi_require_typescript_runtime
+        ok "TypeScript runtime is ready"
         pi_sync_skill
         pi_install_adapter
         pi_adapter_test || die "The OpenFOAM tools did not load correctly inside Pi." \

@@ -10,6 +10,10 @@ PI_PROJECT_SETTINGS="$REPO_ROOT/.pi/settings.json"
 PI_INSTALL_HINT="Installation command:
     npm install -g @earendil-works/pi-coding-agent"
 
+# Populated by pi_require_typescript_runtime. Kept as an array so optional Node
+# flags and the tsx fallback are passed without shell re-parsing.
+PI_TYPESCRIPT_RUNNER=()
+
 pi_present() { have pi; }
 
 # The pi skill is a symlink to src/harness/rules/openfoam.md so there is only one
@@ -61,6 +65,34 @@ pi_supports_packages() {
 }
 
 pi_version() { pi --version 2>/dev/null | head -1; }
+
+# The adapter is a .ts file. Pi has its own TypeScript loader, but setup also
+# imports the extension directly for its deterministic self-test. Accept either
+# Node's built-in type stripping or the standalone tsx runtime.
+pi_require_typescript_runtime() {
+    PI_TYPESCRIPT_RUNNER=()
+    local extension="$PI_PACKAGE_DIR/extensions/openfoam-tools.ts"
+
+    if have node && node --check "$extension" >/dev/null 2>&1; then
+        PI_TYPESCRIPT_RUNNER=(node)
+        return 0
+    fi
+
+    if have node && node --experimental-strip-types --check "$extension" >/dev/null 2>&1; then
+        PI_TYPESCRIPT_RUNNER=(node --experimental-strip-types)
+        return 0
+    fi
+
+    if have tsx && tsx --version >/dev/null 2>&1; then
+        PI_TYPESCRIPT_RUNNER=(tsx)
+        return 0
+    fi
+
+    die "Node.js cannot load the TypeScript OpenFOAM extension." \
+        "Install Node.js 22.6 or newer, or install the tsx runtime, then run ./setup.sh again:
+
+    npm install -g tsx"
+}
 
 # Is the adapter already registered in project settings?
 pi_adapter_installed() {
@@ -115,8 +147,8 @@ pi_install_adapter() {
 pi_adapter_test() {
     local test_script="$REPO_ROOT/tests/pi_adapter/adapter_test.mjs"
     [[ -f "$test_script" ]] || { warn "Adapter self-test is missing; skipped."; return 0; }
-    have node || { warn "Node.js was not found; the adapter self-test was skipped."; return 0; }
-    if run_logged node "$test_script"; then
+    [[ ${#PI_TYPESCRIPT_RUNNER[@]} -gt 0 ]] || pi_require_typescript_runtime
+    if run_logged "${PI_TYPESCRIPT_RUNNER[@]}" "$test_script"; then
         ok "Safety checks passed"
         return 0
     fi
