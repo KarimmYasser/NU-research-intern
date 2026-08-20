@@ -37,6 +37,26 @@ make_sandbox() {
 exit 0
 STUB
     chmod +x "$sandbox/repo/.venv/bin/python3"
+
+    # Stub system python3 in sandbox/bin that satisfies >= 3.11 check
+    cat >"$sandbox/bin/python3" <<'PYSTUB'
+#!/usr/bin/env bash
+if [[ "$*" == *"--version"* ]]; then
+    echo "Python 3.12.0"
+    exit 0
+fi
+if [[ "$*" == *"sys.version_info"* ]]; then
+    exit 0
+fi
+# Delegate to system python for inline scripts if available
+for candidate in /usr/local/bin/python3 /opt/homebrew/bin/python3 /usr/bin/python3; do
+    if [[ -x "$candidate" && "$candidate" != "$0" ]]; then
+        exec "$candidate" "$@"
+    fi
+done
+exit 0
+PYSTUB
+    chmod +x "$sandbox/bin/python3"
 }
 
 # A fake `pi` that records its arguments and emulates `pi install <path> -l`.
@@ -139,10 +159,18 @@ PY
 test_missing_pi_message() {
     local sandbox; sandbox="$(mktemp -d)"
     make_sandbox "$sandbox"
-    # no fake pi on PATH
+    # Ensure no pi binary is on PATH even if pi is globally installed on host
+    local isolated_bin="$sandbox/clean_bin"
+    mkdir -p "$isolated_bin"
+    for tool in bash sh cat rm cp mv mkdir date dirname basename diff grep sed chmod mktemp touch uname which env; do
+        local tool_path; tool_path="$(command -v "$tool" || true)"
+        [[ -n "$tool_path" ]] && ln -s "$tool_path" "$isolated_bin/$tool" 2>/dev/null || true
+    done
+    cp "$sandbox/bin/python3" "$isolated_bin/python3"
+
     local output
     output="$( cd "$sandbox/repo" && HOME="$sandbox/home" \
-        PATH="$sandbox/bin:/usr/bin:/bin:/usr/sbin:/sbin" ./setup.sh 2>&1 )"
+        PATH="$isolated_bin" ./setup.sh 2>&1 )"
     if grep -q "Pi is not installed" <<<"$output" \
         && grep -q "npm install -g @earendil-works/pi-coding-agent" <<<"$output"; then
         pass "missing Pi produces an actionable message"
@@ -287,8 +315,49 @@ test_scripts_valid() {
         || fail "all scripts are executable and valid" "$bad"
 }
 
+test_python_too_old_rejected() {
+    local sandbox; sandbox="$(mktemp -d)"
+    make_sandbox "$sandbox"; make_fake_pi "$sandbox/bin"
+    # Stub python 3.10
+    cat >"$sandbox/bin/python3" <<'PYSTUB'
+#!/usr/bin/env bash
+if [[ "$*" == *"--version"* ]]; then echo "Python 3.10.12"; exit 0; fi
+if [[ "$*" == *"sys.version_info"* ]]; then exit 1; fi
+exit 0
+PYSTUB
+    chmod +x "$sandbox/bin/python3"
+    local output rc
+    output="$(run_setup "$sandbox")"; rc=$?
+    if [[ $rc -ne 0 ]] && grep -q "Python 3.11 or newer is required" <<<"$output"; then
+        pass "python < 3.11 is rejected with actionable message"
+    else
+        fail "python < 3.11 is rejected with actionable message" "rc=$rc: $(tail -2 <<<"$output")"
+    fi
+    rm -rf "$sandbox"
+}
+
+test_pi_runtime_failure_message() {
+    local sandbox; sandbox="$(mktemp -d)"
+    make_sandbox "$sandbox"
+    # pi exists but crashes on execution
+    printf '#!/usr/bin/env bash\nexit 1\n' >"$sandbox/bin/pi"
+    chmod +x "$sandbox/bin/pi"
+    printf '#!/usr/bin/env bash\necho "v18.19.1"\n' >"$sandbox/bin/node"
+    chmod +x "$sandbox/bin/node"
+    local output rc
+    output="$(run_setup "$sandbox")"; rc=$?
+    if [[ $rc -ne 0 ]] && grep -q "Node.js 22.19 or newer" <<<"$output"; then
+        pass "pi runtime failure highlights Node version requirement"
+    else
+        fail "pi runtime failure highlights Node version requirement" "rc=$rc: $(tail -3 <<<"$output")"
+    fi
+    rm -rf "$sandbox"
+}
+
 printf '\nInstaller regression tests\n\n'
 test_scripts_valid
+test_python_too_old_rejected
+test_pi_runtime_failure_message
 test_pi_is_default
 test_preserves_and_idempotent
 test_missing_pi_message

@@ -39,14 +39,23 @@ say ""
 
 # --- 1. Required software ----------------------------------------------------
 have python3 || die "Python 3 is not installed." \
-    "Please install Python 3.10 or newer and run ./setup.sh again."
-ok "Python is ready"
+    "Please install Python 3.11 or newer and run ./setup.sh again."
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+    die "Python 3.11 or newer is required." \
+        "Found $(python3 --version 2>&1). Please install Python 3.11 or newer and run ./setup.sh again."
+fi
+ok "Python is ready ($(python3 --version 2>&1))"
 
 # --- 2 & 3. Private Python environment + dependencies -----------------------
 if [[ ! -x "$VENV_PYTHON" ]]; then
-    run_logged python3 -m venv "$VENV_DIR" \
-        || die "The private Python environment could not be created." \
-               "See the log for details, then run ./setup.sh again."
+    if ! run_logged python3 -m venv "$VENV_DIR"; then
+        VENV_HINT="See the log for details, then run ./setup.sh again."
+        if [[ -f /etc/debian_version || -f /etc/os-release ]] && grep -qiE "debian|ubuntu" /etc/*release* 2>/dev/null; then
+            VENV_HINT="On Debian/Ubuntu systems, install the python3-venv package:
+    sudo apt install python3-venv (or python3.12-venv / python3.11-venv)"
+        fi
+        die "The private Python environment could not be created." "$VENV_HINT"
+    fi
 fi
 run_logged "$VENV_PYTHON" -m pip install --upgrade pip \
     || warn "pip could not be upgraded; continuing with the existing version."

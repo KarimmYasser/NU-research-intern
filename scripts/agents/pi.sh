@@ -53,10 +53,23 @@ _pi_link_or_copy() {
 
 # Hard requirement: Pi itself.
 pi_require() {
-    if pi_present; then return 0; fi
-    die "Pi is not installed." "Please install Pi and then run ./setup.sh again.
+    if ! pi_present; then
+        die "Pi is not installed." "Please install Pi and then run ./setup.sh again.
 
 $PI_INSTALL_HINT"
+    fi
+
+    # Check that Pi can run without crashing (e.g. from an incompatible Node.js version)
+    if ! pi --version >/dev/null 2>&1; then
+        local node_ver=""
+        if have node; then node_ver="$(node --version 2>/dev/null || true)"; fi
+        die "Pi failed to run." "Pi requires Node.js 22.19 or newer (detected Node ${node_ver:-unknown}).
+On Ubuntu / Debian, install Node.js 22:
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+    sudo apt install -y nodejs
+Then reinstall Pi:
+    npm install -g @earendil-works/pi-coding-agent"
+    fi
 }
 
 # Pi must be new enough to support project-local packages (pi install -l).
@@ -97,6 +110,7 @@ pi_require_typescript_runtime() {
 # Is the adapter already registered in project settings?
 pi_adapter_installed() {
     [[ -f "$PI_PROJECT_SETTINGS" ]] || return 1
+    have python3 || return 1
     python3 - "$PI_PROJECT_SETTINGS" "$PI_PACKAGE_DIR" <<'PY'
 import json, os, sys
 settings_path, package_dir = sys.argv[1:3]

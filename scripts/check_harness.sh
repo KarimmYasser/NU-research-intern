@@ -63,8 +63,14 @@ fi
 DOCKER="$(docker_state)"
 if [[ "$DOCKER" == "running" ]]; then
     ok "Docker is running"
-else
+elif [[ "$DOCKER" == "permission_denied" ]]; then
+    warn "Docker is running, but permission was denied for the socket."
+    say "  Fix with: sudo usermod -aG docker \$USER && newgrp docker"
+    PROBLEMS=$((PROBLEMS + 1))
+elif [[ "$DOCKER" == "stopped" ]]; then
     warn "Docker is not running"
+else
+    warn "Docker is not installed"
 fi
 
 say ""
@@ -72,7 +78,11 @@ if [[ "$CAN_CREATE" == "1" && "$DOCKER" == "running" ]]; then
     say "Everything is ready. Start with: ./start.sh"
 elif [[ "$CAN_CREATE" == "1" ]]; then
     say "The assistant can create cases now."
-    say "Start Docker before asking it to run a simulation."
+    if [[ "$DOCKER" == "permission_denied" ]]; then
+        say "Add your user to the docker group before running simulations."
+    else
+        say "Start Docker before asking it to run a simulation."
+    fi
 else
     say "Run ./setup.sh to fix the problems above."
 fi

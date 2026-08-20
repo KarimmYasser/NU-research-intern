@@ -20,6 +20,7 @@ import hashlib
 import os
 import queue
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -28,6 +29,20 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
 from typing import ClassVar
+
+def _find_docker_binary() -> str:
+    if shutil.which("docker"):
+        return "docker"
+    for candidate in [
+        "/usr/local/bin/docker",
+        "/opt/homebrew/bin/docker",
+        os.path.expanduser("~/.docker/bin/docker"),
+        "/Applications/Docker.app/Contents/Resources/bin/docker",
+        "/usr/bin/docker",
+    ]:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return "docker"
 
 DEFAULT_IMAGE = os.environ.get("FOAM_DOCKER_IMAGE", "microfluidica/openfoam:13")
 DEFAULT_TIMEOUT = int(os.environ.get("FOAM_VALIDATION_TIMEOUT", "600"))  # seconds; foamRun can be slow on large meshes — raise via env if time permits
@@ -250,7 +265,8 @@ class ValidationAgent:
                     stop_on_nan: bool = False) -> subprocess.CompletedProcess:
         host = case_dir.resolve().as_posix()  # e.g. D:/.../case -> Docker Desktop maps it
         cname = f"foam_run_{uuid.uuid4().hex[:8]}"
-        cmd = ["docker", "run", "--name", cname, "--rm", "--init", "-v", f"{host}:/case", "-w", "/case", self.image, *args]
+        docker_bin = _find_docker_binary()
+        cmd = [docker_bin, "run", "--name", cname, "--rm", "--init", "-v", f"{host}:/case", "-w", "/case", self.image, *args]
 
         def _cleanup_container(p: subprocess.Popen | None) -> None:
             if p is not None:
@@ -259,7 +275,7 @@ class ValidationAgent:
                 except OSError:
                     pass
             try:
-                subprocess.run(["docker", "rm", "-f", cname],
+                subprocess.run([docker_bin, "rm", "-f", cname],
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=False)
             except (OSError, ValueError, subprocess.SubprocessError):
                 pass
@@ -369,8 +385,13 @@ class ValidationAgent:
         text = raw_output.strip()
         if not text:
             return []
-        if "docker not found" in text:
+        lower_text = text.lower()
+        if "docker not found" in lower_text:
             return [ValidationError(FailureClass.ENVIRONMENT, None, text)]
+        if "permission denied" in lower_text and ("docker.sock" in lower_text or "docker daemon" in lower_text):
+            return [ValidationError(FailureClass.ENVIRONMENT, None, f"Docker permission denied: {text}")]
+        if "cannot connect to the docker daemon" in lower_text or "is the docker daemon running" in lower_text:
+            return [ValidationError(FailureClass.ENVIRONMENT, None, f"Docker daemon not running: {text}")]
 
         # A runtime crash (SIGFPE/SIGSEGV/...) prints a signal stack trace
         # instead of a "FOAM FATAL ERROR" block, so the regex below never

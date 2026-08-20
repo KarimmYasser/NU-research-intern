@@ -35,6 +35,24 @@ You do **not** need OpenFOAM installed on your computer. Everything runs in Dock
 
 ## 2. First-time setup
 
+### Prerequisites (if starting on a fresh Ubuntu / Debian VM)
+
+Ensure you have Python 3.11+ (with `python3-venv`) and Node.js 22+ installed:
+
+```bash
+# 1. System packages (Python 3.11+, venv, git, curl)
+sudo apt update && sudo apt install -y python3 python3-venv git curl
+
+# 2. Node.js 22 LTS (required for modern ESM and Pi)
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# 3. Pi coding agent
+npm install -g @earendil-works/pi-coding-agent
+```
+
+### Setup the assistant
+
 Open a terminal in the project folder and run:
 
 ```bash
@@ -48,6 +66,7 @@ Setting up your OpenFOAM AI assistant...
 
 ✓ Python is ready
 ✓ OpenFOAM tools are installed
+✓ TypeScript runtime is ready
 ✓ Pi is connected to the harness
 ✓ Safety checks passed
 ✓ Your simulation workspace is ready

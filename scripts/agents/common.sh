@@ -63,14 +63,65 @@ harness_python() {
     if [[ -x "$VENV_PYTHON" ]]; then printf '%s' "$VENV_PYTHON"; else printf '%s' "python3"; fi
 }
 
+ensure_docker_path() {
+    if have docker; then return 0; fi
+    local candidates=(
+        "/usr/local/bin"
+        "/opt/homebrew/bin"
+        "$HOME/.docker/bin"
+        "/Applications/Docker.app/Contents/Resources/bin"
+        "/usr/bin"
+    )
+    for dir in "${candidates[@]}"; do
+        if [[ -x "$dir/docker" ]]; then
+            export PATH="$dir:$PATH"
+            return 0
+        fi
+    done
+    return 1
+}
+
 docker_state() {
+    ensure_docker_path
     if ! have docker; then printf 'missing'; return; fi
-    if docker info >/dev/null 2>&1; then printf 'running'; else printf 'stopped'; fi
+    if docker info >/dev/null 2>&1; then printf 'running'; return; fi
+
+    # Probe standard socket locations if DOCKER_HOST was unset
+    if [[ -z "${DOCKER_HOST:-}" ]]; then
+        local sockets=(
+            "unix://$HOME/.docker/run/docker.sock"
+            "unix://$HOME/.docker/desktop/docker.sock"
+            "unix:///var/run/docker.sock"
+        )
+        for sock in "${sockets[@]}"; do
+            local sock_path="${sock#unix://}"
+            if [[ -S "$sock_path" ]]; then
+                if DOCKER_HOST="$sock" docker info >/dev/null 2>&1; then
+                    export DOCKER_HOST="$sock"
+                    printf 'running'
+                    return
+                fi
+            fi
+        done
+    fi
+
+    local err
+    err="$(docker info 2>&1 || true)"
+    if grep -qi "permission denied" <<<"$err"; then
+        printf 'permission_denied'
+    else
+        printf 'stopped'
+    fi
 }
 
 report_docker() {
     case "$(docker_state)" in
         running) ok "Docker is running (OpenFOAM validation available)" ;;
+        permission_denied)
+            warn "Docker is running, but your user does not have permission to access the socket."
+            say "  On Linux, add yourself to the docker group and reload permissions:"
+            say "    sudo usermod -aG docker \$USER && newgrp docker"
+            ;;
         stopped)
             warn "Docker is not currently running."
             say "  You can still create and inspect simulations, but the assistant"

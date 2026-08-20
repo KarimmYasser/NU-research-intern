@@ -126,7 +126,15 @@ print("   ✓ Expert error diagnosis engine passed!")
 echo ""
 echo "6. Testing the Pi adapter against the real Python harness..."
 if command -v node >/dev/null 2>&1; then
-    node "$REPO_ROOT/tests/pi_adapter/adapter_test.mjs"
+    if node "$REPO_ROOT/tests/pi_adapter/adapter_test.mjs" 2>/dev/null; then
+        :
+    elif node --experimental-strip-types "$REPO_ROOT/tests/pi_adapter/adapter_test.mjs" 2>/dev/null; then
+        :
+    elif command -v tsx >/dev/null 2>&1 && tsx "$REPO_ROOT/tests/pi_adapter/adapter_test.mjs" 2>/dev/null; then
+        :
+    else
+        node "$REPO_ROOT/tests/pi_adapter/adapter_test.mjs"
+    fi
 else
     echo "   (skipped: Node.js is not installed)"
 fi
